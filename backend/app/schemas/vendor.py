@@ -14,6 +14,7 @@ class AcopioConfigSchema(BaseModel):
     freeze_days: int = Field(default=30, ge=1)
     max_withdrawal_days: int = Field(default=60, ge=1)
     min_notice_hours: int = Field(default=24, ge=0)
+    price_basis: str = Field(default="LIST", pattern="^(LIST|CASH)$")
 
 
 class VendorCreateRequest(BaseModel):

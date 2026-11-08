@@ -289,15 +289,34 @@ def resolve_item_ambiguity(
     if payload.confirmed_term is not None:
         item.requested_term = payload.confirmed_term
 
-    # Validación Human-in-the-Loop estricta (Cierre de CO-03: Bloqueo de bypass con body vacío {})
+    # Validación Human-in-the-Loop estricta (Cierre de CO-03 / CO-04: Bloqueo de bypass con body vacío {})
+    provided_updates = payload.model_dump(exclude_unset=True)
+    if not item.is_confirmed and not provided_updates:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Debe suministrar al menos un atributo técnico (como material constructivo o diámetro) para resolver la ambigüedad del ítem.",
+        )
+
     norm_context = strip_accents(f"{item.requested_term} {item.raw_line}").lower()
     is_critical_fam = any(fam in norm_context for fam in MATERIAL_FAMILIES)
     if is_critical_fam:
-        if not item.material_type or item.diameter_mm is None:
+        if not item.material_type or item.diameter_mm is None or float(item.diameter_mm) <= 0:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="No se puede confirmar el ítem: debe especificar obligatoriamente el material constructivo y el diámetro físico.",
             )
+
+    is_steel_fam = any(s in norm_context for s in ["barra", "hierro", "acero", "malla", "alambre"])
+    if is_steel_fam:
+        if item.diameter_mm is None or float(item.diameter_mm) <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No se puede confirmar el ítem: debe especificar obligatoriamente el diámetro nominal de la barra o hierro.",
+            )
+
+    if payload.material_type and not payload.confirmed_term:
+        if payload.material_type.lower() not in item.requested_term.lower():
+            item.requested_term = f"{item.requested_term} {item.material_type}".strip()
 
     item.completeness = "user_resolved"
     item.is_confirmed = True

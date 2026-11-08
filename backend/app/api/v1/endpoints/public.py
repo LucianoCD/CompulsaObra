@@ -40,7 +40,8 @@ def get_public_budget_view(
 
     # Invariante CO-05: El enlace público solo debe exponer presupuestos emitidos y congelados
     req = db.scalar(select(Requisition).where(Requisition.id == run.requisition_id))
-    if not req or req.status != "LOCKED_BUDGET":
+    matrix_status = run.comparison_matrix_json.get("status") if isinstance(run.comparison_matrix_json, dict) else None
+    if not req or req.status != "LOCKED_BUDGET" or matrix_status != "LOCKED_BUDGET":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="El presupuesto aún no ha sido emitido y congelado (LOCKED_BUDGET) para acceso público.",

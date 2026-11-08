@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.workspace import Workspace, User
-from app.api.deps import get_current_workspace
+from app.api.deps import get_current_workspace, get_current_user_optional
 from app.services.seed import seed_demo_data_if_needed
 
 router = APIRouter(prefix="/auth", tags=["Autenticación"])
@@ -172,79 +172,60 @@ def get_or_create_demo_session(db: Session = Depends(get_db)):
 def switch_workspace_mode(
     payload: SwitchModeRequest,
     current_ws: Workspace = Depends(get_current_workspace),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    """Permite conmutar entre Modo Demo y un Espacio de Trabajo Real auditado."""
+    """Permite conmutar entre Modo Demo y el Espacio de Trabajo Real del usuario autenticado."""
     if payload.is_demo:
         demo_ws = seed_demo_data_if_needed(db)
-        token = create_access_token({
+        token_claims = {
             "sub": "demo@compulsaobra.com.ar",
             "workspace_id": str(demo_ws.id),
             "role": demo_ws.owner_role,
             "is_demo": True,
-        })
+        }
+        if current_user:
+            token_claims["real_user_id"] = str(current_user.id)
+        token = create_access_token(token_claims)
         return SessionResponse(
             access_token=token,
             workspace_id=demo_ws.id,
             workspace_name=demo_ws.name,
             is_demo=True,
             role=demo_ws.owner_role,
-            email="demo@compulsaobra.com.ar",
+            email=current_user.email if current_user else "demo@compulsaobra.com.ar",
         )
     else:
-        # Si la sesión actual ya pertenece a un espacio real, mantenerlo
-        if not current_ws.is_demo:
-            token = create_access_token({
-                "sub": f"usuario_{str(current_ws.id)[:6]}@compulsaobra.com.ar",
-                "workspace_id": str(current_ws.id),
-                "role": current_ws.owner_role,
-                "is_demo": False,
-            })
-            return SessionResponse(
-                access_token=token,
-                workspace_id=current_ws.id,
-                workspace_name=current_ws.name,
-                is_demo=False,
-                role=current_ws.owner_role,
-                email=f"usuario_{str(current_ws.id)[:6]}@compulsaobra.com.ar",
+        # Cierre definitivo CO-01 / CO-02: Exigir cuenta real auténtica previa
+        if not current_user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Para operar en un espacio de trabajo real auditado, debe iniciar sesión o registrarse.",
             )
 
-        # Crear un espacio real NUEVO e independiente para esta sesión (evita colisión global BUG-03)
-        target_role = payload.role if payload.role in ["BUYER", "ESTIMATOR"] else "ESTIMATOR"
-        new_real_ws = Workspace(
-            id=uuid.uuid4(),
-            name=payload.workspace_name or "Mi Estudio / Obra Real",
-            owner_role=target_role,
-            is_demo=False,
+        user_ws = db.scalar(
+            select(Workspace).where(Workspace.id == current_user.workspace_id, Workspace.is_demo == False)
         )
-        db.add(new_real_ws)
-        db.flush()
-
-        real_user = User(
-            id=uuid.uuid4(),
-            workspace_id=new_real_ws.id,
-            email=f"usuario_{str(new_real_ws.id)[:6]}@compulsaobra.com.ar",
-            full_name="Usuario Real Obra",
-            password_hash=get_password_hash("realpass123"),
-            role=target_role,
-        )
-        db.add(real_user)
-        db.commit()
+        if not user_ws:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No se encontró un espacio de trabajo real asociado a su cuenta de usuario.",
+            )
 
         token = create_access_token({
-            "sub": real_user.email,
-            "user_id": str(real_user.id),
-            "workspace_id": str(new_real_ws.id),
-            "role": new_real_ws.owner_role,
+            "sub": current_user.email,
+            "user_id": str(current_user.id),
+            "workspace_id": str(user_ws.id),
+            "role": current_user.role,
             "is_demo": False,
         })
         return SessionResponse(
             access_token=token,
-            workspace_id=new_real_ws.id,
-            workspace_name=new_real_ws.name,
+            workspace_id=user_ws.id,
+            workspace_name=user_ws.name,
             is_demo=False,
-            role=new_real_ws.owner_role,
-            email=real_user.email,
+            role=current_user.role,
+            email=current_user.email,
         )
 
 
@@ -252,6 +233,7 @@ def switch_workspace_mode(
 def update_current_role(
     payload: RoleUpdateRequest,
     current_ws: Workspace = Depends(get_current_workspace),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
     """Actualiza el rol operativo activo (BUYER vs ESTIMATOR) y emite un token JWT actualizado."""
@@ -265,12 +247,18 @@ def update_current_role(
         u.role = payload.role
     db.commit()
 
-    new_token = create_access_token({
-        "sub": f"user_{str(current_ws.id)[:6]}@compulsaobra.com.ar",
+    token_claims = {
         "workspace_id": str(current_ws.id),
         "role": current_ws.owner_role,
         "is_demo": current_ws.is_demo,
-    })
+    }
+    if current_user:
+        token_claims["sub"] = current_user.email
+        token_claims["user_id"] = str(current_user.id)
+    else:
+        token_claims["sub"] = "demo@compulsaobra.com.ar"
+
+    new_token = create_access_token(token_claims)
 
     return RoleUpdateResponse(
         status="success",

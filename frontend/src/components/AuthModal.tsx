@@ -16,7 +16,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const { login, register, switchMode } = useWorkspaceStore();
+  const { login, register } = useWorkspaceStore();
   const dialogRef = useRef<HTMLDialogElement | null>(null);
 
   useEffect(() => {
@@ -51,19 +51,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
       onClose();
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : 'Error de autenticación');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleQuickSwitch = async () => {
-    setFormError(null);
-    setIsSubmitting(true);
-    try {
-      await switchMode(false);
-      onClose();
-    } catch (err: unknown) {
-      setFormError(err instanceof Error ? err.message : 'Error al cambiar a cuenta real');
     } finally {
       setIsSubmitting(false);
     }
@@ -206,15 +193,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
             className="text-xs text-content-secondary hover:text-action-primary transition text-center font-semibold"
           >
             {isRegister ? '¿Ya tienes cuenta? Inicia sesión aquí' : '¿No tienes cuenta? Regístrate gratis'}
-          </button>
-
-          <button
-            type="button"
-            onClick={handleQuickSwitch}
-            disabled={isSubmitting}
-            className="text-[11px] text-content-muted hover:text-content-secondary transition text-center underline underline-offset-2"
-          >
-            O cambiar a espacio real temporal anónimo
           </button>
         </div>
       </div>

@@ -186,17 +186,6 @@ async def import_vendor_catalog(
     db: Session = Depends(get_db),
 ):
     """Importa una lista de precios .xlsx o .csv con deduplicación incremental SHA-256."""
-    vendor = db.scalar(select(Vendor).where(Vendor.id == vendor_id))
-    if not vendor:
-        raise HTTPException(status_code=404, detail="Comercio no encontrado")
-
-    # Invariante SEC-02: Prohibir sobrescritura sobre el directorio público o comercios ajenos
-    if vendor.is_public_directory or vendor.workspace_id != current_ws.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Acceso denegado: solo puede importar listas de precios sobre comercios propios de su espacio de trabajo.",
-        )
-
     file_bytes = await file.read()
     if not file_bytes:
         raise HTTPException(status_code=400, detail="El archivo enviado está vacío")
@@ -206,6 +195,17 @@ async def import_vendor_catalog(
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"La planilla excede el tamaño máximo permitido de {max_mb} MB.",
+        )
+
+    vendor = db.scalar(select(Vendor).where(Vendor.id == vendor_id))
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Comercio no encontrado")
+
+    # Invariante SEC-02: Prohibir sobrescritura sobre el directorio público o comercios ajenos
+    if vendor.is_public_directory or vendor.workspace_id != current_ws.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acceso denegado: solo puede importar listas de precios sobre comercios propios de su espacio de trabajo.",
         )
 
     mapping = ColumnMappingSchema()
@@ -225,6 +225,7 @@ async def import_vendor_catalog(
         file_bytes=file_bytes,
         filename=file.filename or "catalogo.csv",
         mapping=mapping,
+        workspace_id=current_ws.id,
     )
     return summary
 

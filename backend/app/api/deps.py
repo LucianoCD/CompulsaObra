@@ -63,32 +63,26 @@ def get_current_workspace(
         # En espacios privados o tokens emitidos para usuarios, validar existencia de usuario
         if not ws.is_demo:
             user_id = payload.get("user_id")
-            sub_email = payload.get("sub")
-            if user_id:
-                try:
-                    u_uuid = uuid.UUID(str(user_id))
-                    user = db.scalar(
-                        select(User).where(User.id == u_uuid, User.workspace_id == ws.id)
-                    )
-                    if not user:
-                        raise HTTPException(
-                            status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Usuario no autorizado o desvinculado del espacio de trabajo.",
-                        )
-                except ValueError:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Identificador de usuario corrupto en el token.",
-                    )
-            elif sub_email:
-                user = db.scalar(
-                    select(User).where(User.email == sub_email, User.workspace_id == ws.id)
+            if not user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="El token de acceso para un espacio real debe incluir un user_id autenticado.",
                 )
-                if not user:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Usuario no autorizado en el espacio de trabajo.",
-                    )
+            try:
+                u_uuid = uuid.UUID(str(user_id))
+            except (ValueError, TypeError):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Identificador de usuario corrupto en el token.",
+                )
+            user = db.scalar(
+                select(User).where(User.id == u_uuid, User.workspace_id == ws.id)
+            )
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Usuario no autorizado o no perteneciente a este espacio de trabajo.",
+                )
 
         return ws
 
@@ -109,4 +103,26 @@ def get_current_workspace(
     # 3. Fallback determinista: Workspace Demo Jujuy (arranque automático sin credenciales)
     demo_ws = seed_demo_data_if_needed(db)
     return demo_ws
+
+
+def get_current_user_optional(
+    db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(None),
+) -> Optional[User]:
+    """Obtiene el usuario autenticado a partir del token si existe y es válido."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    token = authorization.split(" ", 1)[1].strip()
+    payload = decode_access_token(token)
+    if not payload:
+        return None
+    user_id = payload.get("user_id") or payload.get("real_user_id")
+    if not user_id:
+        return None
+    try:
+        u_uuid = uuid.UUID(str(user_id))
+    except (ValueError, TypeError):
+        return None
+    return db.scalar(select(User).where(User.id == u_uuid))
+
 

@@ -9,17 +9,19 @@ description: >-
 
 # Aislamiento de Workspace, Modo Demo Jujuy, `/traccion` y QA E2E (CompulsaObra)
 
-## 1. Aislamiento por `workspace_id` y Seguridad
+## 1. Aislamiento por `workspace_id`, Autenticación Real y Seguridad
 - Todas las consultas sobre `requisitions`, `product_aliases`, `comparison_runs` y `vendors` privados deben filtrar por `workspace_id == current_workspace_id` (permitiendo en `vendors` aquellos con `is_public_directory == True`).
-- Si un usuario intenta acceder o modificar una requisición, catálogo o comparativa de otro `workspace_id`, lanzar `WorkspaceIsolationError` (`403 Forbidden` / `404 Not Found`).
-- Validar siempre la firma `HMAC-SHA256` en `/api/v1/public/comparisons/{share_token}` usando `hmac.compare_digest`.
+- Para operar en un espacio de trabajo real (`is_demo == False`), se exige autenticación auténtica (`/auth/register` o `/auth/login`); queda terminantemente prohibida la creación de usuarios sintéticos con contraseñas fijas.
+- La dependencia `deps.py:get_current_workspace` exige obligatoriamente un token Bearer válido con `user_id` verificado en base de datos para espacios no-Demo.
+- Si un usuario intenta acceder o modificar una requisición, catálogo o comparativa de otro `workspace_id`, lanzar `WorkspaceIsolationError` (`403 Forbidden` / `404 Not Found`). La importación de catálogos valida autorización tanto en endpoint como en servicio (`CO-03`).
+- Validar siempre la firma `HMAC-SHA256` en `/api/v1/public/comparisons/{share_token}` usando `hmac.compare_digest` y exigir que la corrida esté sellada con `LOCKED_BUDGET` (`CO-05`).
 
 ## 2. Entorno Demo (`is_demo = TRUE`) vs. Trazabilidad Real (`/traccion`)
 - **Seed Idempotente (`seed.py`):** Al iniciar la aplicación, asegurar la existencia del workspace Demo (`is_demo = True`) y los 3 comercios semilla de Jujuy:
   1. `Corralón El Pórtico - Demo` (San Salvador de Jujuy)
   2. `Ferretería Industrial Cuyaya - Demo` (San Salvador de Jujuy)
   3. `Sanitarios y Materiales Palpalá - Demo` (Palpalá)
-- **Interfaz Demo (`DemoBanner.tsx`):** Mientras `workspace.is_demo === true`, exhibir de forma visible la etiqueta `[MODO DEMO DATOS COMERCIALES ILUSTRATIVOS]`, el selector de rol (`BUYER` / `ESTIMATOR`) y el conmutador en 1 clic hacia un **Espacio de Trabajo Real (`is_demo = false`)**.
+- **Interfaz Demo (`DemoBanner.tsx`):** Mientras `workspace.is_demo === true`, exhibir de forma visible la etiqueta `[MODO DEMO DATOS COMERCIALES ILUSTRATIVOS]`, el selector de rol (`BUYER` / `ESTIMATOR`) y el botón **"Pasar a Espacio Real"** que abre el modal de registro/login auténtico (`AuthModal.tsx`).
 - **Filtro Estricto en `/api/v1/public/traction` (`E2E-05`):**
   - Las métricas públicas (`active_real_workspaces`, `real_vendors_compared`, `real_budgets_generated`, `total_lines_processed`, `median_elaboration_seconds`) deben filtrar **obligatoriamente** con `WHERE Workspace.is_demo == False`. Ninguna ejecución del modo Demo puede contaminar `/traccion`.
 

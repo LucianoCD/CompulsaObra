@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.models.vendor import Vendor, PriceList, VendorProduct
 from app.schemas.vendor import ColumnMappingSchema, CatalogImportSummary
 from app.services.unit_normalizer import UnitNormalizerService, strip_accents
-from app.core.exceptions import CatalogImportValidationError
+from app.core.exceptions import CatalogImportValidationError, WorkspaceIsolationError
 
 
 def parse_argentina_currency(val: Any) -> Decimal:
@@ -74,11 +74,33 @@ class CatalogImporterService:
         rows: List[Dict[str, Any]] = []
 
         if lower_name.endswith(".xls") and not lower_name.endswith(".xlsx"):
-            raise CatalogImportValidationError(
-                "El formato binario tradicional .xls no está soportado. Guarde el archivo como .xlsx o .csv."
-            )
+            try:
+                import xlrd
+                book = xlrd.open_workbook(file_contents=file_bytes)
+                sheet = book.sheet_by_index(0)
+                if sheet.nrows == 0:
+                    raise CatalogImportValidationError("La planilla Excel .xls está vacía")
+                
+                header_row = [sheet.cell_value(0, col) for col in range(sheet.ncols)]
+                headers = [
+                    strip_accents(str(h).strip().lower()) if h is not None and str(h).strip() != "" else f"col_{i}"
+                    for i, h in enumerate(header_row)
+                ]
 
-        if lower_name.endswith(".xlsx"):
+                for row_idx in range(1, sheet.nrows):
+                    row_vals = [sheet.cell_value(row_idx, col) for col in range(sheet.ncols)]
+                    if not any(c is not None and str(c).strip() != "" for c in row_vals):
+                        continue
+                    row_dict = {}
+                    for h, cell in zip(headers, row_vals):
+                        row_dict[h] = cell
+                    rows.append(row_dict)
+            except CatalogImportValidationError:
+                raise
+            except Exception as e:
+                raise CatalogImportValidationError(f"No se pudo procesar la planilla Excel .xls: {str(e)}")
+
+        elif lower_name.endswith(".xlsx"):
             try:
                 wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
             except Exception as e:
@@ -138,7 +160,7 @@ class CatalogImporterService:
                     row_dict[h] = val.strip()
                 rows.append(row_dict)
         else:
-            raise CatalogImportValidationError(f"Formato no soportado: '{filename}'. Use .xlsx o .csv")
+            raise CatalogImportValidationError(f"Formato no soportado: '{filename}'. Use .xlsx, .xls o .csv")
 
         return rows
 
@@ -151,11 +173,18 @@ class CatalogImporterService:
         file_bytes: bytes,
         filename: str,
         mapping: ColumnMappingSchema,
+        workspace_id: Optional[uuid.UUID] = None,
     ) -> CatalogImportSummary:
         """Importa el catálogo, aplica versionado incremental y deduplicación por row_sha256."""
         vendor = db.scalar(select(Vendor).where(Vendor.id == vendor_id))
         if not vendor:
             raise CatalogImportValidationError(f"Comercio con ID {vendor_id} no encontrado")
+
+        # Cierre definitivo CO-03: Autorización estricta en capa de servicio
+        if vendor.is_public_directory or (workspace_id is not None and vendor.workspace_id != workspace_id):
+            raise WorkspaceIsolationError(
+                "Acceso denegado: no se permite importar catálogos sobre comercios del directorio público ni de otros espacios de trabajo."
+            )
 
         raw_rows = cls.read_tabular_data(file_bytes, filename)
         if not raw_rows:
@@ -220,6 +249,11 @@ class CatalogImporterService:
                     price_list = parse_argentina_currency(row.get(list_col))
                 else:
                     price_list = price_cash
+
+                # Si solo se proveyó un precio y el comercio tiene descuento por pago contado (CO-09)
+                if price_cash == price_list and vendor.cash_discount_pct and float(vendor.cash_discount_pct) > 0:
+                    discount_factor = (Decimal("100") - Decimal(str(vendor.cash_discount_pct))) / Decimal("100")
+                    price_cash = (price_list * discount_factor).quantize(Decimal("0.01"))
             except CatalogImportValidationError:
                 skipped_invalid_count += 1
                 continue

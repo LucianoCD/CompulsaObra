@@ -506,7 +506,7 @@ class ComparisonOptimizerService:
                 }
 
             vendor_summaries_list.append({
-                "vendor_id": v.id,
+                "vendor_id": str(v.id),
                 "vendor_name": v.name,
                 "locality": localities.get(vid_str, ""),
                 "coverage_pct": cov_pct,
@@ -520,7 +520,7 @@ class ComparisonOptimizerService:
 
         sorted_v = sorted(vendor_summaries_list, key=lambda x: (-x["coverage_pct"], x["total_with_delivery_ars"]))
         best_single = sorted_v[0] if sorted_v else None
-        best_single_id = best_single["vendor_id"] if best_single else None
+        best_single_id = str(best_single["vendor_id"]) if best_single else None
         best_single_name = best_single["vendor_name"] if best_single else None
         best_single_total = best_single["total_with_delivery_ars"] if best_single else None
 

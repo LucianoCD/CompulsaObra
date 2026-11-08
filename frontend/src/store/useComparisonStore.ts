@@ -8,6 +8,7 @@ import {
   PaymentModality,
   ComparisonMatrixResponse,
   LockBudgetResponse,
+  ManualVendorMatchOverride,
 } from '../types/api';
 import { apiClient } from '../services/apiClient';
 
@@ -28,6 +29,11 @@ interface ComparisonState {
   setMarkupPct: (markup: number) => void;
   setIncludeDeliveryFees: (include: boolean) => void;
   runComparison: (reqId: string) => Promise<void>;
+  applyMatrixOverride: (
+    runId: string,
+    matchId: string,
+    payload: ManualVendorMatchOverride
+  ) => Promise<void>;
   lockBudget: () => Promise<void>;
   resetComparison: () => void;
 }
@@ -126,6 +132,20 @@ export const useComparisonStore = create<ComparisonState>((set, get) => ({
         isLoading: false,
         error: err instanceof Error ? err.message : 'Error al ejecutar compulsa',
       });
+    }
+  },
+
+  applyMatrixOverride: async (runId, matchId, payload) => {
+    try {
+      set({ isLoading: true, error: null });
+      const updatedMatrix = await apiClient.overrideMatch(runId, matchId, payload);
+      set({ currentMatrix: updatedMatrix, isLoading: false });
+    } catch (err: unknown) {
+      set({
+        isLoading: false,
+        error: err instanceof Error ? err.message : 'Error al aplicar sustitución de producto',
+      });
+      throw err;
     }
   },
 

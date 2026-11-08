@@ -34,10 +34,11 @@ INCH_TO_MM_MAP: dict[str, float] = {
 - **Detección de Atributos Críticos Faltantes (`missing_critical_attribute`):**
   - Para familias que exigen material constructivo (`caño`, `tubo`, `codo`, `tee`, `cupla`, `union`), si la entrada no especifica `PVC`, `Polipropileno`, `Termofusión`, `Corrugado` o `Hierro estructural`, asignar `completeness = 'missing_critical_attribute'`, `is_confirmed = False` y poblar `clarification_prompt` con las opciones estructuradas para la consola Human-in-the-Loop (`DisambiguationTable.tsx`).
 
-## 2. Ingesta Multimodal con Fallback Determinista (`multimodal_extractor.py`)
+## 2. Ingesta Multimodal y Fallback Transparente (`multimodal_extractor.py`)
 - Soportar los 3 presets instantáneos: `manuscrito_obra`, `whatsapp_jerga_noa` y `computo_tecnico`.
 - Cuando se recibe `image_bytes` y existe `GEMINI_API_KEY`, usar el SDK `google-genai` (`gemini-2.5-flash`) con Structured Outputs (`response_schema=RequisitionExtractionBatch`) y pasar cada renglón por `parse_and_normalize_line`.
-- Si no hay `GEMINI_API_KEY` en entorno local/CI, aplicar el extractor determinista de respaldo sin lanzar errores 500.
+- Si se envía una imagen y **no** hay `GEMINI_API_KEY` configurada, lanzar `MultimodalExtractionUnavailableError` (`503 Service Unavailable`). Queda terminantemente prohibido degradar silenciosamente a un preset inventado engañando al usuario con datos falsos (`CO-02`).
+- En la resolución Human-in-the-Loop (`/resolve`), validar obligatoriamente por familia que no se confirme un ítem sin material ni diámetro (`CO-04`).
 
 ## 3. Motor de Matching con Cero Sustitución Ciega (`matching_engine.py`)
 Orden estricto de evaluación para cada `(workspace_id, item, vendor_id)`:
@@ -48,6 +49,7 @@ Orden estricto de evaluación para cada `(workspace_id, item, vendor_id)`:
    - Si `item.length_m IS NOT NULL`: `vendor_products.length_m IS NOT NULL AND ABS(vendor_products.length_m - :l) <= 0.05`
    - Si `item.weight_kg IS NOT NULL`: `vendor_products.weight_kg IS NOT NULL AND ABS(vendor_products.weight_kg - :w) <= 0.5`
    - Si `item.material_type IS NOT NULL`: coincidencia normalizada del material.
-4. **Ranking Léxico sobre Candidatos Físicamente Válidos:**
-   - Ordenar únicamente los productos que superaron el filtro dimensional (`ts_rank_cd` + `similarity` en PostgreSQL 16, o puntaje léxico determinista por tokens/trigramas en SQLite).
-   - Si ningún producto del comercio cumple la dimensión física exacta (ej. pide `"Caño PVC 40 mm"` y el comercio sólo tiene `"Caño PVC 110 mm"`), devolver `match_status = 'NOT_CARRIED'` (`unit_price_applied_ars = None`). **Jamás sustituir por otra medida.**
+4. **Cero Sustitución Ciega:** Si ningún producto cumple la medida exacta, devolver `match_status = 'NOT_CARRIED'` (`unit_price_applied_ars = None`).
+5. **Ranking Léxico y Resolución de Tarifa (`resolve_effective_unit_price`):**
+   - Ordenar candidatos válidos usando similitud léxica (`ts_rank_cd` + `similarity` en PostgreSQL o tokens/trigramas deterministas en SQLite).
+   - Resolver tarifa aplicando `vendor.cash_discount_pct` en modalidad `CASH` si el producto no trae precio contado diferenciado, y respetar `price_basis` (`LIST` vs `CASH`) en modalidad `ACOPIO` (`CO-09`).

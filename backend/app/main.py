@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.core.database import engine, Base, SessionLocal
+from app.core.database import engine, Base, SessionLocal, run_migrations
 from app.core.exceptions import CompulsaDomainException, domain_exception_handler
 from app.api.v1.router import api_router
 from app.services.seed import seed_demo_data_if_needed
@@ -13,8 +13,8 @@ from app.services.seed import seed_demo_data_if_needed
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Inicialización de esquema y datos semilla ilustrativos de Jujuy
-    Base.metadata.create_all(bind=engine)
+    # Inicialización de esquema mediante migraciones Alembic y datos semilla ilustrativos de Jujuy (CO-13)
+    run_migrations()
     with SessionLocal() as db:
         seed_demo_data_if_needed(db)
     yield

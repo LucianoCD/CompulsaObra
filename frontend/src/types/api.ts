@@ -39,6 +39,7 @@ export interface AcopioConfig {
   freeze_days: number;
   max_withdrawal_days: number;
   min_notice_hours: number;
+  price_basis?: 'LIST' | 'CASH';
 }
 
 export interface AcopioSummary {
@@ -172,8 +173,8 @@ export interface RunComparisonRequest {
 
 export interface ManualVendorMatchOverride {
   vendor_product_id: string;
-  save_vendor_alias: boolean;
-  force_dimension_override: boolean;
+  save_vendor_alias?: boolean;
+  force_dimension_override?: boolean;
 }
 
 export interface ComparisonVendorSummary {

@@ -139,19 +139,59 @@ def test_cannot_upload_catalog_to_public_directory_vendor(client: TestClient, db
 
 
 def test_switch_mode_creates_dedicated_real_workspaces(client: TestClient):
-    """Verifica que dos llamadas a switch-mode para modo real no colisionen en el mismo workspace (BUG-03)."""
-    res1 = client.post(
+    """Verifica que switch-mode a modo real exija usuario autenticado (CO-02) y no mezcle workspaces entre usuarios."""
+    # 1. Llamada sin token a modo real debe dar 401
+    unauth_res = client.post(
         "/api/v1/auth/switch-mode",
         json={"is_demo": False, "role": "ESTIMATOR"},
     )
-    assert res1.status_code == 200
+    assert unauth_res.status_code == 401
+
+    # 2. Registrar dos usuarios independientes
+    res1 = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "arquitecto1@estudio.com.ar",
+            "password": "PasswordSeguro123!",
+            "full_name": "Arq. Uno",
+            "workspace_name": "Estudio Uno",
+        },
+    )
+    assert res1.status_code == 201
+    token1 = res1.json()["access_token"]
     ws1_id = res1.json()["workspace_id"]
 
     res2 = client.post(
-        "/api/v1/auth/switch-mode",
-        json={"is_demo": False, "role": "BUYER"},
+        "/api/v1/auth/register",
+        json={
+            "email": "arquitecto2@estudio.com.ar",
+            "password": "PasswordSeguro123!",
+            "full_name": "Arq. Dos",
+            "workspace_name": "Estudio Dos",
+        },
     )
-    assert res2.status_code == 200
+    assert res2.status_code == 201
+    token2 = res2.json()["access_token"]
     ws2_id = res2.json()["workspace_id"]
 
-    assert ws1_id != ws2_id, "Cada switch a modo real debe generar su propio workspace aislado"
+    assert ws1_id != ws2_id, "Cada registro genera su propio workspace aislado"
+
+    # 3. Usuario 1 pasa a Demo y luego regresa a Real: debe recuperar su propio workspace
+    demo_switch = client.post(
+        "/api/v1/auth/switch-mode",
+        json={"is_demo": True},
+        headers={"Authorization": f"Bearer {token1}"},
+    )
+    assert demo_switch.status_code == 200
+    assert demo_switch.json()["is_demo"] is True
+    demo_token = demo_switch.json()["access_token"]
+
+    real_switch = client.post(
+        "/api/v1/auth/switch-mode",
+        json={"is_demo": False},
+        headers={"Authorization": f"Bearer {demo_token}"},
+    )
+    assert real_switch.status_code == 200
+    assert real_switch.json()["is_demo"] is False
+    assert real_switch.json()["workspace_id"] == ws1_id
+    assert real_switch.json()["workspace_id"] != ws2_id

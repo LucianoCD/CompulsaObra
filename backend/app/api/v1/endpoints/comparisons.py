@@ -2,10 +2,11 @@
 
 import copy
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -21,6 +22,7 @@ from app.schemas.comparison import (
     LockBudgetResponse,
 )
 from app.api.deps import get_current_workspace
+from app.services.matching_engine import MatchingEngineService
 from app.services.comparison_optimizer import ComparisonOptimizerService
 from app.services.pdf_generator import PDFGeneratorService
 from app.core.exceptions import DimensionMismatchOverrideError, LockedBudgetModificationError
@@ -143,7 +145,8 @@ def override_item_match(
                 f"Peso incompatible: solicitado {req_item.weight_kg} kg vs producto {prod.weight_kg} kg."
             )
 
-    price = prod.price_cash_ars if run.payment_modality == "CASH" else prod.price_list_ars
+    vendor = db.scalar(select(Vendor).where(Vendor.id == match_rec.vendor_id))
+    price = MatchingEngineService.resolve_effective_unit_price(prod, vendor, run.payment_modality)
     qty = req_item.quantity
 
     match_rec.vendor_product_id = prod.id
@@ -205,7 +208,40 @@ def override_item_match(
         include_delivery_fees=matrix.get("include_delivery_fees", True),
     )
 
+    # [CO-06] Sincronizar columnas relacionales de ComparisonRun y estado de Split Cart en base de datos
     run.comparison_matrix_json = matrix
+    if matrix.get("best_single_vendor_id"):
+        run.best_single_vendor_id = uuid.UUID(str(matrix["best_single_vendor_id"]))
+    else:
+        run.best_single_vendor_id = None
+
+    if matrix.get("best_single_total_ars") is not None:
+        run.best_single_total_ars = Decimal(str(matrix["best_single_total_ars"]))
+    else:
+        run.best_single_total_ars = None
+
+    split_cart_data = matrix.get("split_cart") or {}
+    if "total_cart_ars" in split_cart_data:
+        run.split_cart_total_ars = Decimal(str(split_cart_data["total_cart_ars"]))
+    if "savings_vs_single_vendor_ars" in split_cart_data:
+        run.split_cart_savings_ars = Decimal(str(split_cart_data["savings_vs_single_vendor_ars"]))
+
+    # Actualizar is_selected_for_split_cart en cada ComparisonItemMatch
+    for row in matrix.get("matrix_rows", []):
+        r_item_id = uuid.UUID(str(row["requisition_item_id"]))
+        for cell in row.get("vendor_cells", []):
+            c_vendor_id = uuid.UUID(str(cell["vendor_id"]))
+            is_split = bool(cell.get("is_selected_split", False))
+            db.execute(
+                update(ComparisonItemMatch)
+                .where(
+                    ComparisonItemMatch.comparison_run_id == run.id,
+                    ComparisonItemMatch.requisition_item_id == r_item_id,
+                    ComparisonItemMatch.vendor_id == c_vendor_id,
+                )
+                .values(is_selected_for_split_cart=is_split)
+            )
+
     flag_modified(run, "comparison_matrix_json")
     db.commit()
 
@@ -229,7 +265,20 @@ def lock_budget(
 
     req = db.scalar(select(Requisition).where(Requisition.id == run.requisition_id))
     if req:
+        # Si la requisición ya estaba bloqueada por otra corrida previa
+        if req.status == "LOCKED_BUDGET" and run.comparison_matrix_json.get("status") != "LOCKED_BUDGET":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Esta requisición ya cuenta con un presupuesto congelado definitivo.",
+            )
         req.status = "LOCKED_BUDGET"
+
+    # [CO-05] Sellar inmutablemente en comparison_matrix_json
+    matrix = copy.deepcopy(run.comparison_matrix_json)
+    matrix["status"] = "LOCKED_BUDGET"
+    matrix["locked_at"] = datetime.now(timezone.utc).isoformat()
+    run.comparison_matrix_json = matrix
+    flag_modified(run, "comparison_matrix_json")
 
     db.commit()
 

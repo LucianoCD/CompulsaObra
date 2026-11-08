@@ -46,6 +46,43 @@ class MatchingEngineService:
     """Servicio de búsqueda y validación dimensional estricta por comercio."""
 
     @classmethod
+    def resolve_effective_unit_price(
+        cls,
+        prod: VendorProduct,
+        vendor: Optional[Vendor],
+        payment_modality: str,
+    ) -> Decimal:
+        """Determina el precio unitario exacto según la modalidad comercial y políticas del corralón.
+        
+        - CASH: Retorna price_cash_ars. Si es igual a price_list_ars y el comercio tiene cash_discount_pct > 0,
+          aplica el descuento comercial sobre el precio de lista.
+        - LIST: Retorna price_list_ars.
+        - ACOPIO: Consulta la política explícita en acopio_config_json.get('price_basis', 'LIST').
+          Si es 'CASH', aplica tarifa contado. Si es 'LIST', aplica precio de lista.
+        """
+        modality = (payment_modality or "CASH").upper()
+        if modality == "ACOPIO" and vendor and vendor.acopio_config_json:
+            basis = vendor.acopio_config_json.get("price_basis", "LIST").upper()
+            if basis == "CASH":
+                modality = "CASH"
+            else:
+                modality = "LIST"
+
+        if modality == "CASH":
+            p_cash = prod.price_cash_ars
+            if (
+                p_cash == prod.price_list_ars
+                and vendor
+                and vendor.cash_discount_pct
+                and float(vendor.cash_discount_pct) > 0
+            ):
+                factor = (Decimal("100") - Decimal(str(vendor.cash_discount_pct))) / Decimal("100")
+                return (prod.price_list_ars * factor).quantize(Decimal("0.01"))
+            return p_cash
+
+        return prod.price_list_ars
+
+    @classmethod
     def match_item_against_vendor(
         cls,
         db: Session,
@@ -63,6 +100,7 @@ class MatchingEngineService:
         4. Cero sustitución ciega (NOT_CARRIED si no existe la medida).
         5. Ranking léxico.
         """
+        vendor = db.scalar(select(Vendor).where(Vendor.id == vendor_id))
         # 1. Regla de Oro: Bloqueo ante atributos críticos faltantes
         if item.completeness == "missing_critical_attribute":
             raise AmbiguousItemCannotBeMatchedError(
@@ -96,11 +134,7 @@ class MatchingEngineService:
                 )
             )
             if target_prod and cls._satisfies_physical_constraints(item, target_prod):
-                price = (
-                    target_prod.price_cash_ars
-                    if payment_modality == "CASH"
-                    else target_prod.price_list_ars
-                )
+                price = cls.resolve_effective_unit_price(target_prod, vendor, payment_modality)
                 subtotal = price * item.quantity
                 return VendorItemMatchResult(
                     match_status="EXACT_MATCH",
@@ -215,11 +249,7 @@ class MatchingEngineService:
         in_stock_candidates = [c for c in valid_candidates if c[1].stock_available]
         if in_stock_candidates:
             best_score, best_product = in_stock_candidates[0]
-            price = (
-                best_product.price_cash_ars
-                if payment_modality == "CASH"
-                else best_product.price_list_ars
-            )
+            price = cls.resolve_effective_unit_price(best_product, vendor, payment_modality)
             subtotal = price * item.quantity
 
             return VendorItemMatchResult(

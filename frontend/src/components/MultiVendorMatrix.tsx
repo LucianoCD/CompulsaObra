@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 
 export const MultiVendorMatrix: React.FC = () => {
-  const { currentMatrix, lockedBudget, runComparison } = useComparisonStore();
+  const { currentMatrix, lockedBudget, applyMatrixOverride } = useComparisonStore();
 
   const [overrideCell, setOverrideCell] = useState<{
     cell: ComparisonItemCell;
@@ -88,13 +88,12 @@ export const MultiVendorMatrix: React.FC = () => {
         throw new Error('No se encontró el identificador de coincidencia para esta celda.');
       }
 
-      await apiClient.overrideMatch(currentMatrix.run_id, targetMatchId, {
+      await applyMatrixOverride(currentMatrix.run_id, targetMatchId, {
         vendor_product_id: selectedProductId,
         save_vendor_alias: true,
         force_dimension_override: forceOverride,
       });
 
-      await runComparison(currentMatrix.requisition_id);
       handleCloseDrawer();
       setSavingOverride(false);
     } catch (err: unknown) {
