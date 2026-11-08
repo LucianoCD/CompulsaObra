@@ -1,0 +1,136 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Design Tokens W3C DTCG — Tema Claro (Papel Técnico de Cómputo) */
+  --surface-canvas: #FAF8F5;
+  --surface-elevated: #FFFDF9;
+  --surface-subtle: #F2EFE9;
+  --border-hairline: #DCD7CD;
+  --border-strong: #9E9689;
+
+  --text-primary: #16181A;
+  --text-secondary: #4A4F55;
+  --text-muted: #686E77;
+
+  --action-primary: #B83B14;
+  --action-primary-hover: #962E0D;
+  --action-focus-ring: #0F52BA;
+  --action-danger: #B91C1C;
+
+  --winner-bg: #ECFDF5;
+  --winner-text: #065F46;
+  --hitl-warning-bg: #FFFBEB;
+  --hitl-warning-border: #D97706;
+  --hitl-warning-text: #78350F;
+  --not-carried-bg: #EFECE6;
+  --not-carried-line: rgba(158, 150, 137, 0.35);
+
+  --font-display: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-sans: 'Public Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  /* Design Tokens W3C DTCG — Tema Oscuro (Pizarra de Obradores) */
+  --surface-canvas: #111315;
+  --surface-elevated: #181B1F;
+  --surface-subtle: #20242A;
+  --border-hairline: #2E333B;
+  --border-strong: #525A65;
+
+  --text-primary: #F3F4F6;
+  --text-secondary: #ABB2BF;
+  --text-muted: #848D9C;
+
+  --action-primary: #E05A2B;
+  --action-primary-hover: #F06D40;
+  --action-focus-ring: #60A5FA;
+  --action-danger: #F87171;
+
+  --winner-bg: #06362A;
+  --winner-text: #6EE7B7;
+  --hitl-warning-bg: #3B2506;
+  --hitl-warning-border: #F59E0B;
+  --hitl-warning-text: #FDE68A;
+  --not-carried-bg: #1C1F24;
+  --not-carried-line: rgba(82, 90, 101, 0.4);
+
+  color-scheme: dark;
+}
+
+@layer base {
+  body {
+    background-color: var(--surface-canvas);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+  }
+
+  /* Focus Indicator de Alto Contraste (WCAG 2.2 - Criterio 2.4.13) */
+  :focus-visible {
+    outline: 2px solid var(--action-focus-ring);
+    outline-offset: 2px;
+  }
+
+  /* Modal Dialog Scroll Containment (Modern Web Guidance) */
+  dialog:modal {
+    overscroll-behavior: contain;
+  }
+  dialog::backdrop {
+    overscroll-behavior: contain;
+  }
+}
+
+/* Tipografía Numérica Monoespaciada y Tabular para Finanzas y Metrología */
+.tabular-nums {
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-family: var(--font-mono);
+}
+
+/* Patrón Visual de Trama Diagonal a 45° para Celdas NOT_CARRIED (WCAG 1.4.1) */
+.bg-not-carried-pattern {
+  background-color: var(--not-carried-bg);
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 6px,
+    var(--not-carried-line) 6px,
+    var(--not-carried-line) 8px
+  );
+}
+
+/* Contenedor de Matriz con Protección de Foco Oculto (WCAG 2.4.11 Focus Not Obscured) */
+.matrix-scroll-container {
+  scroll-padding-top: 96px;
+  scroll-padding-inline-start: 280px;
+}
+
+/* Utilidad Accesible Visually Hidden (Modern Web Guidance) */
+.visually-hidden:where(:not(:focus-within, :active)) {
+  position: absolute !important;
+  clip-path: inset(50%) !important;
+  overflow: hidden !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  white-space: nowrap !important;
+}
+
+.skip-link:focus {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 100;
+  padding: 8px 16px;
+  background-color: var(--action-primary);
+  color: #FFFDF9;
+  font-weight: 600;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}

@@ -1,0 +1,34 @@
+{
+  "compulsa-safety-gate": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command|call_mcp_tool",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./hooks/pre-tool-guard.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "compulsa-context-pulse": {
+    "enabled": true,
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "node ./hooks/context-pulse.mjs --mode=session-start",
+        "timeout": 5
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "node ./hooks/context-pulse.mjs --mode=pre-invocation",
+        "timeout": 5
+      }
+    ]
+  }
+}

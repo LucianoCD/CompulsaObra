@@ -1,0 +1,29 @@
+# Entornos virtuales y dependencias
+.venv/
+venv/
+node_modules/
+frontend/node_modules/
+
+# Bases de datos locales SQLite
+*.db
+*.sqlite
+*.sqlite3
+backend/compulsaobra.db
+
+# Compilación y artefactos
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+frontend/dist/
+frontend/build/
+
+# Variables de entorno secretas
+.env
+.env.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
