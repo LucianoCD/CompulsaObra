@@ -1,19 +1,49 @@
-"""Endpoints de autenticación, sesión Demo y alternancia de perfiles."""
+"""Endpoints de autenticación, cookies HttpOnly, rate limiting, verificación y alternancia de perfiles."""
 
+import hmac
+import secrets
 import uuid
-from typing import Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Body, status
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user_optional, get_current_workspace
+from app.core.config import settings
 from app.core.database import get_db
-from app.core.security import create_access_token, get_password_hash, verify_password
-from app.models.workspace import Workspace, User
-from app.api.deps import get_current_workspace, get_current_user_optional
+from app.core.security import (
+    auth_rate_limiter,
+    create_access_token,
+    get_password_hash,
+    verify_password,
+)
+from app.models.workspace import User, Workspace
 from app.services.seed import seed_demo_data_if_needed
 
 router = APIRouter(prefix="/auth", tags=["Autenticación"])
+AUTH_COOKIE_NAME = "compulsa_access_token"
+
+
+def _client_rate_key(request: Request, action: str) -> str:
+    host = request.client.host if request.client else "unknown"
+    return f"{host}:{action}"
+
+
+def _set_auth_cookie(response: Response, token: str) -> None:
+    """Emite la sesión JWT en una cookie HttpOnly segura (H-21)."""
+    is_prod = settings.ENVIRONMENT.lower() == "production"
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=is_prod,
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        path="/",
+    )
 
 
 class SessionResponse(BaseModel):
@@ -24,6 +54,9 @@ class SessionResponse(BaseModel):
     is_demo: bool
     role: str
     email: str
+    email_verified: bool = True
+    verification_required: bool = False
+    verification_token: Optional[str] = None
 
 
 class RegisterRequest(BaseModel):
@@ -37,6 +70,11 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+class VerifyEmailRequest(BaseModel):
+    email: EmailStr
+    token: str
 
 
 class SwitchModeRequest(BaseModel):
@@ -58,9 +96,13 @@ class RoleUpdateResponse(BaseModel):
 @router.post("/register", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
 def register_user_and_workspace(
     payload: RegisterRequest,
+    request: Request,
+    response: Response,
     db: Session = Depends(get_db),
 ):
-    """Registra una cuenta real nueva con su propio Workspace privado aislado."""
+    """Registra una cuenta real nueva con su propio Workspace privado aislado y token de verificación."""
+    auth_rate_limiter.check_rate_limit(_client_rate_key(request, "register"))
+
     existing_user = db.scalar(select(User).where(User.email == payload.email))
     if existing_user:
         raise HTTPException(
@@ -70,7 +112,6 @@ def register_user_and_workspace(
 
     target_role = payload.role if payload.role in ["BUYER", "ESTIMATOR"] else "ESTIMATOR"
 
-    # Crear Workspace privado exclusivo
     new_ws = Workspace(
         id=uuid.uuid4(),
         name=payload.workspace_name or "Mi Estudio / Obra Real",
@@ -80,7 +121,7 @@ def register_user_and_workspace(
     db.add(new_ws)
     db.flush()
 
-    # Crear Usuario propietario
+    verification_token = secrets.token_urlsafe(24)
     new_user = User(
         id=uuid.uuid4(),
         workspace_id=new_ws.id,
@@ -88,6 +129,9 @@ def register_user_and_workspace(
         full_name=payload.full_name,
         password_hash=get_password_hash(payload.password),
         role=target_role,
+        email_verified=False,
+        verification_token=verification_token,
+        failed_login_attempts=0,
     )
     db.add(new_user)
     db.commit()
@@ -99,6 +143,11 @@ def register_user_and_workspace(
         "role": new_user.role,
         "is_demo": False,
     })
+    _set_auth_cookie(response, token)
+
+    expose_verification_token = (
+        verification_token if settings.ENVIRONMENT.lower() != "production" else None
+    )
 
     return SessionResponse(
         access_token=token,
@@ -107,21 +156,95 @@ def register_user_and_workspace(
         is_demo=False,
         role=new_user.role,
         email=new_user.email,
+        email_verified=new_user.email_verified,
+        verification_required=settings.REQUIRE_EMAIL_VERIFICATION,
+        verification_token=expose_verification_token,
     )
+
+
+@router.post("/verify-email")
+def verify_user_email(
+    payload: VerifyEmailRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Confirma la propiedad del correo electrónico mediante token seguro (H-22)."""
+    auth_rate_limiter.check_rate_limit(_client_rate_key(request, "verify_email"))
+
+    user = db.scalar(select(User).where(User.email == payload.email))
+    if not user or not user.verification_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token de verificación inválido o expirado.",
+        )
+
+    if not hmac.compare_digest(payload.token, user.verification_token):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token de verificación inválido.",
+        )
+
+    user.email_verified = True
+    user.verification_token = None
+    db.commit()
+    return {"status": "verified", "email": user.email}
 
 
 @router.post("/login", response_model=SessionResponse)
 def login_user(
     payload: LoginRequest,
+    request: Request,
+    response: Response,
     db: Session = Depends(get_db),
 ):
-    """Inicia sesión autenticada y resuelve el Workspace privado del usuario."""
+    """Inicia sesión autenticada con protección contra fuerza bruta y emisión de cookie HttpOnly."""
+    auth_rate_limiter.check_rate_limit(_client_rate_key(request, "login"))
+    normalized_email = payload.email.strip().lower()
+    auth_rate_limiter.ensure_not_locked(normalized_email)
+
     user = db.scalar(select(User).where(User.email == payload.email))
+    now = datetime.now(timezone.utc)
+    if user and user.locked_until is not None:
+        locked_until = (
+            user.locked_until.replace(tzinfo=timezone.utc)
+            if user.locked_until.tzinfo is None
+            else user.locked_until
+        )
+        if locked_until > now:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Cuenta temporalmente bloqueada por múltiples intentos fallidos.",
+            )
+
     if not user or not verify_password(payload.password, user.password_hash):
+        auth_rate_limiter.record_failed_attempt(normalized_email)
+        if user:
+            user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+            if user.failed_login_attempts >= settings.AUTH_LOCKOUT_THRESHOLD:
+                user.locked_until = now + timedelta(
+                    seconds=settings.AUTH_LOCKOUT_DURATION_SECONDS
+                )
+            db.commit()
+            if user.failed_login_attempts >= settings.AUTH_LOCKOUT_THRESHOLD:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Cuenta bloqueada temporalmente tras exceder el límite de intentos fallidos.",
+                )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciales de acceso inválidas.",
         )
+
+    if settings.REQUIRE_EMAIL_VERIFICATION and not user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Debe verificar su correo electrónico antes de iniciar sesión.",
+        )
+
+    auth_rate_limiter.clear_failed_attempts(normalized_email)
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    db.commit()
 
     ws = db.scalar(select(Workspace).where(Workspace.id == user.workspace_id))
     if not ws:
@@ -137,6 +260,7 @@ def login_user(
         "role": user.role,
         "is_demo": ws.is_demo,
     })
+    _set_auth_cookie(response, token)
 
     return SessionResponse(
         access_token=token,
@@ -145,12 +269,19 @@ def login_user(
         is_demo=ws.is_demo,
         role=user.role,
         email=user.email,
+        email_verified=user.email_verified,
+        verification_required=settings.REQUIRE_EMAIL_VERIFICATION,
     )
 
 
 @router.post("/demo-session", response_model=SessionResponse)
-def get_or_create_demo_session(db: Session = Depends(get_db)):
+def get_or_create_demo_session(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
     """Inicia o recupera la sesión demo ilustrativa con los 3 corralones de Jujuy."""
+    auth_rate_limiter.check_rate_limit(_client_rate_key(request, "demo_session"))
     demo_ws = seed_demo_data_if_needed(db)
     token = create_access_token({
         "sub": "demo@compulsaobra.com.ar",
@@ -158,6 +289,7 @@ def get_or_create_demo_session(db: Session = Depends(get_db)):
         "role": demo_ws.owner_role,
         "is_demo": True,
     })
+    _set_auth_cookie(response, token)
     return SessionResponse(
         access_token=token,
         workspace_id=demo_ws.id,
@@ -165,12 +297,21 @@ def get_or_create_demo_session(db: Session = Depends(get_db)):
         is_demo=demo_ws.is_demo,
         role=demo_ws.owner_role,
         email="demo@compulsaobra.com.ar",
+        email_verified=True,
     )
+
+
+@router.post("/logout")
+def logout_user(response: Response):
+    """Elimina la cookie HttpOnly de sesión (H-21)."""
+    response.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
+    return {"status": "logged_out"}
 
 
 @router.post("/switch-mode", response_model=SessionResponse)
 def switch_workspace_mode(
     payload: SwitchModeRequest,
+    response: Response,
     current_ws: Workspace = Depends(get_current_workspace),
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
@@ -187,6 +328,7 @@ def switch_workspace_mode(
         if current_user:
             token_claims["real_user_id"] = str(current_user.id)
         token = create_access_token(token_claims)
+        _set_auth_cookie(response, token)
         return SessionResponse(
             access_token=token,
             workspace_id=demo_ws.id,
@@ -194,9 +336,9 @@ def switch_workspace_mode(
             is_demo=True,
             role=demo_ws.owner_role,
             email=current_user.email if current_user else "demo@compulsaobra.com.ar",
+            email_verified=True,
         )
     else:
-        # Cierre definitivo CO-01 / CO-02: Exigir cuenta real auténtica previa
         if not current_user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -204,7 +346,10 @@ def switch_workspace_mode(
             )
 
         user_ws = db.scalar(
-            select(Workspace).where(Workspace.id == current_user.workspace_id, Workspace.is_demo == False)
+            select(Workspace).where(
+                Workspace.id == current_user.workspace_id,
+                Workspace.is_demo.is_(False),
+            )
         )
         if not user_ws:
             raise HTTPException(
@@ -219,6 +364,7 @@ def switch_workspace_mode(
             "role": current_user.role,
             "is_demo": False,
         })
+        _set_auth_cookie(response, token)
         return SessionResponse(
             access_token=token,
             workspace_id=user_ws.id,
@@ -226,12 +372,14 @@ def switch_workspace_mode(
             is_demo=False,
             role=current_user.role,
             email=current_user.email,
+            email_verified=current_user.email_verified,
         )
 
 
 @router.patch("/role", response_model=RoleUpdateResponse)
 def update_current_role(
     payload: RoleUpdateRequest,
+    response: Response,
     current_ws: Workspace = Depends(get_current_workspace),
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
@@ -241,7 +389,6 @@ def update_current_role(
         raise HTTPException(status_code=400, detail="Rol inválido. Elija 'BUYER' o 'ESTIMATOR'")
     current_ws.owner_role = payload.role
 
-    # Actualizar también rol en usuarios del workspace
     users = db.scalars(select(User).where(User.workspace_id == current_ws.id)).all()
     for u in users:
         u.role = payload.role
@@ -259,6 +406,7 @@ def update_current_role(
         token_claims["sub"] = "demo@compulsaobra.com.ar"
 
     new_token = create_access_token(token_claims)
+    _set_auth_cookie(response, new_token)
 
     return RoleUpdateResponse(
         status="success",
@@ -276,4 +424,3 @@ def get_current_session_info(current_ws: Workspace = Depends(get_current_workspa
         "is_demo": current_ws.is_demo,
         "role": current_ws.owner_role,
     }
-

@@ -1,0 +1,20 @@
+services:
+  db:
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-compulsa_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_local_postgres_only}
+      POSTGRES_DB: ${POSTGRES_DB:-compulsa_obra}
+
+  backend:
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-compulsa_user}:${POSTGRES_PASSWORD:-dev_local_postgres_only}@db:5432/${POSTGRES_DB:-compulsa_obra}
+      SECRET_KEY: ${SECRET_KEY:-dev_local_jwt_key_not_for_production_32chars_min}
+      HMAC_SHARE_SECRET: ${HMAC_SHARE_SECRET:-dev_local_hmac_key_not_for_production_32chars_min}
+      CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173","http://localhost:5174","http://127.0.0.1:5174"]'
+      REQUIRE_EMAIL_VERIFICATION: "false"
+    volumes:
+      - ./backend:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useComparisonStore } from '../store/useComparisonStore';
 import { apiClient } from '../services/apiClient';
-import { ComparisonItemCell, VendorProductResponse } from '../types/api';
+import { ComparisonItemCell, ComparisonItemRow, VendorProductResponse } from '../types/api';
 import {
   Check,
   Edit3,
@@ -18,9 +18,7 @@ export const MultiVendorMatrix: React.FC = () => {
 
   const [overrideCell, setOverrideCell] = useState<{
     cell: ComparisonItemCell;
-    itemId: string;
-    requestedTerm: string;
-    reqDiameter: number | null;
+    row: ComparisonItemRow;
   } | null>(null);
   const [vendorProducts, setVendorProducts] = useState<VendorProductResponse[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
@@ -30,6 +28,7 @@ export const MultiVendorMatrix: React.FC = () => {
   // Selección en Drawer
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [forceOverride, setForceOverride] = useState(false);
+  const [overrideReason, setOverrideReason] = useState('');
 
   const dialogRef = useRef<HTMLDialogElement | null>(null);
 
@@ -47,16 +46,12 @@ export const MultiVendorMatrix: React.FC = () => {
 
   const isLocked = !!lockedBudget;
 
-  const handleOpenOverride = async (
-    cell: ComparisonItemCell,
-    itemId: string,
-    requestedTerm: string,
-    reqDiameter: number | null
-  ) => {
+  const handleOpenOverride = async (cell: ComparisonItemCell, row: ComparisonItemRow) => {
     if (isLocked) return;
-    setOverrideCell({ cell, itemId, requestedTerm, reqDiameter });
+    setOverrideCell({ cell, row });
     setSelectedProductId(null);
     setForceOverride(false);
+    setOverrideReason('');
     setOverrideError(null);
 
     try {
@@ -74,11 +69,73 @@ export const MultiVendorMatrix: React.FC = () => {
     setOverrideCell(null);
     setSelectedProductId(null);
     setForceOverride(false);
+    setOverrideReason('');
     setOverrideError(null);
   };
 
+  const selectedProduct = vendorProducts.find((p) => p.id === selectedProductId);
+
+  const normalizeText = (val: string) =>
+    val.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+
+  const technicalDiscrepancies: string[] = [];
+  if (overrideCell && selectedProduct) {
+    const reqRow = overrideCell.row;
+    if (reqRow.material_type) {
+      if (!selectedProduct.material_type) {
+        technicalDiscrepancies.push(`Material requerido '${reqRow.material_type}' vs producto sin especificar.`);
+      } else {
+        const reqMat = normalizeText(reqRow.material_type);
+        const prodMat = normalizeText(selectedProduct.material_type);
+        const bothSteel =
+          (reqMat.includes('hierro') || reqMat.includes('acero')) &&
+          (prodMat.includes('hierro') || prodMat.includes('acero'));
+        if (!bothSteel && reqMat !== prodMat && !reqMat.includes(prodMat) && !prodMat.includes(reqMat)) {
+          technicalDiscrepancies.push(
+            `Material incompatible: solicitado '${reqRow.material_type}' vs producto '${selectedProduct.material_type}'.`
+          );
+        }
+      }
+    }
+    if (reqRow.diameter_mm != null) {
+      if (selectedProduct.diameter_mm == null || Math.abs(selectedProduct.diameter_mm - reqRow.diameter_mm) > 0.5) {
+        technicalDiscrepancies.push(
+          `Diámetro incompatible: solicitado Ø ${reqRow.diameter_mm} mm vs producto ${
+            selectedProduct.diameter_mm != null ? `Ø ${selectedProduct.diameter_mm} mm` : 'sin diámetro'
+          }.`
+        );
+      }
+    }
+    const reqUnit = (reqRow.requested_unit || 'UN').toUpperCase();
+    if (reqRow.length_m != null && !['M', 'MT', 'MTS', 'METRO', 'METROS'].includes(reqUnit)) {
+      if (selectedProduct.length_m == null || Math.abs(selectedProduct.length_m - reqRow.length_m) > 0.05) {
+        technicalDiscrepancies.push(
+          `Longitud incompatible: solicitado ${reqRow.length_m} m vs producto ${
+            selectedProduct.length_m != null ? `${selectedProduct.length_m} m` : 'sin longitud'
+          }.`
+        );
+      }
+    }
+    if (reqRow.weight_kg != null && !['KG', 'KILO', 'KILOS'].includes(reqUnit)) {
+      if (selectedProduct.weight_kg == null || Math.abs(selectedProduct.weight_kg - reqRow.weight_kg) > 0.5) {
+        technicalDiscrepancies.push(
+          `Peso incompatible: solicitado ${reqRow.weight_kg} kg vs producto ${
+            selectedProduct.weight_kg != null ? `${selectedProduct.weight_kg} kg` : 'sin peso'
+          }.`
+        );
+      }
+    }
+  }
+
+  const hasDimensionMismatch = technicalDiscrepancies.length > 0;
+  const requiresReason = hasDimensionMismatch && forceOverride;
+
   const handleConfirmOverride = async () => {
     if (!overrideCell || !selectedProductId) return;
+    if (requiresReason && overrideReason.trim().length < 5) {
+      setOverrideError('Debes ingresar una justificación técnica (mínimo 5 caracteres) para forzar la sustitución.');
+      return;
+    }
 
     try {
       setSavingOverride(true);
@@ -92,6 +149,7 @@ export const MultiVendorMatrix: React.FC = () => {
         vendor_product_id: selectedProductId,
         save_vendor_alias: true,
         force_dimension_override: forceOverride,
+        override_reason: hasDimensionMismatch ? overrideReason.trim() : overrideReason.trim() || undefined,
       });
 
       handleCloseDrawer();
@@ -101,13 +159,6 @@ export const MultiVendorMatrix: React.FC = () => {
       setOverrideError(err instanceof Error ? err.message : 'Error al sustituir producto');
     }
   };
-
-  const selectedProduct = vendorProducts.find((p) => p.id === selectedProductId);
-  const hasDimensionMismatch =
-    !!selectedProduct &&
-    overrideCell?.reqDiameter != null &&
-    selectedProduct.diameter_mm != null &&
-    Math.abs(selectedProduct.diameter_mm - (overrideCell?.reqDiameter || 0)) > 0.5;
 
   return (
     <section
@@ -251,9 +302,7 @@ export const MultiVendorMatrix: React.FC = () => {
                             )}
                             {!isLocked && (
                               <button
-                                onClick={() =>
-                                  handleOpenOverride(cell, row.requisition_item_id, row.requested_term, row.diameter_mm ?? null)
-                                }
+                                onClick={() => handleOpenOverride(cell, row)}
                                 type="button"
                                 className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition inline-flex items-center gap-1 text-[10px] font-sans text-content-secondary hover:text-action-primary underline underline-offset-2 ml-1"
                                 title="Cambiar producto asignado"
@@ -336,12 +385,13 @@ export const MultiVendorMatrix: React.FC = () => {
             {/* Contexto del Ítem Solicitado */}
             <div className="p-4 bg-surface-canvas border-b border-surface-hairline text-xs space-y-1">
               <div className="text-content-muted">Ítem solicitado en el pliego:</div>
-              <div className="font-bold text-content-primary text-sm font-sans">{overrideCell.requestedTerm}</div>
-              {overrideCell.reqDiameter && (
-                <div className="text-[11px] font-mono text-content-secondary">
-                  Diámetro requerido: <strong>Ø {overrideCell.reqDiameter} mm</strong>
-                </div>
-              )}
+              <div className="font-bold text-content-primary text-sm font-sans">{overrideCell.row.requested_term}</div>
+              <div className="text-[11px] font-mono text-content-secondary flex flex-wrap gap-2">
+                {overrideCell.row.material_type && <span>Material: <strong>{overrideCell.row.material_type}</strong></span>}
+                {overrideCell.row.diameter_mm != null && <span>Ø <strong>{overrideCell.row.diameter_mm} mm</strong></span>}
+                {overrideCell.row.length_m != null && <span>Long: <strong>{overrideCell.row.length_m} m</strong></span>}
+                {overrideCell.row.weight_kg != null && <span>Peso: <strong>{overrideCell.row.weight_kg} kg</strong></span>}
+              </div>
             </div>
 
             {overrideError && (
@@ -407,16 +457,18 @@ export const MultiVendorMatrix: React.FC = () => {
               )}
             </div>
 
-            {/* Alerta de Discrepancia Dimensional y Confirmación */}
+            {/* Alerta de Discrepancia Dimensional / Material y Confirmación (H-10) */}
             {hasDimensionMismatch && (
               <div className="p-4 bg-semantic-hitlBg border-t border-semantic-hitlBorder text-xs text-semantic-hitlText space-y-2">
                 <div className="flex items-start gap-2 font-bold">
                   <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-700 dark:text-amber-400" />
-                  <span>Discrepancia Dimensional Física Detectada</span>
+                  <span>Discrepancias Técnicas Detectadas ({technicalDiscrepancies.length})</span>
                 </div>
-                <p className="text-[11px] leading-relaxed">
-                  El pliego solicita <strong>Ø {overrideCell.reqDiameter} mm</strong> y el producto seleccionado posee <strong>Ø {selectedProduct?.diameter_mm} mm</strong>. Esta acción vulnera la correspondencia física directa.
-                </p>
+                <ul className="list-disc pl-4 space-y-0.5 text-[11px] leading-relaxed">
+                  {technicalDiscrepancies.map((disc, idx) => (
+                    <li key={idx}>{disc}</li>
+                  ))}
+                </ul>
                 <label className="flex items-center gap-2 pt-1 font-semibold cursor-pointer select-none">
                   <input
                     type="checkbox"
@@ -424,8 +476,23 @@ export const MultiVendorMatrix: React.FC = () => {
                     onChange={(e) => setForceOverride(e.target.checked)}
                     className="rounded-control border-surface-strong text-action-primary focus:ring-action-focus w-4 h-4"
                   />
-                  <span>Forzar sustitución dimensional bajo mi responsabilidad técnica</span>
+                  <span>Forzar sustitución técnica bajo mi responsabilidad</span>
                 </label>
+                {forceOverride && (
+                  <div className="pt-1 space-y-1">
+                    <label htmlFor="override-reason-input" className="block text-[11px] font-bold">
+                      Justificación técnica obligatoria:
+                    </label>
+                    <input
+                      id="override-reason-input"
+                      type="text"
+                      value={overrideReason}
+                      onChange={(e) => setOverrideReason(e.target.value)}
+                      placeholder="Ej.: Aprobado por dirección de obra por faltante en plaza..."
+                      className="w-full px-2.5 py-1.5 rounded-control border border-surface-strong bg-surface-canvas text-content-primary text-xs focus:outline-none focus:ring-1 focus:ring-action-primary"
+                    />
+                  </div>
+                )}
               </div>
             )}
 
@@ -440,7 +507,11 @@ export const MultiVendorMatrix: React.FC = () => {
               </button>
               <button
                 onClick={handleConfirmOverride}
-                disabled={savingOverride || !selectedProductId || (hasDimensionMismatch && !forceOverride)}
+                disabled={
+                  savingOverride ||
+                  !selectedProductId ||
+                  (hasDimensionMismatch && (!forceOverride || overrideReason.trim().length < 5))
+                }
                 type="button"
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-50 text-white font-bold text-xs shadow-sm transition min-h-[38px]"
               >

@@ -1,11 +1,10 @@
 """Pruebas de seguridad, aislamiento multitenant y autenticación (SEC-01, SEC-02, CO-01, CO-04, BUG-03)."""
 
 import uuid
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models.workspace import Workspace, User
+from app.models.workspace import Workspace
 from app.models.vendor import Vendor
 
 
@@ -52,7 +51,6 @@ def test_user_cannot_access_another_workspace(client: TestClient, db: Session):
     )
     assert res_reg.status_code == 201
     token_a = res_reg.json()["access_token"]
-    ws_a_id = res_reg.json()["workspace_id"]
 
     # 2. Crear Workspace B
     ws_b = Workspace(name="Empresa B", is_demo=False)
@@ -125,7 +123,7 @@ def test_auth_register_and_login_flow(client: TestClient):
 def test_cannot_upload_catalog_to_public_directory_vendor(client: TestClient, db: Session):
     """Verifica que no se permita modificar catálogos de corralones públicos desde la API de usuario (SEC-02)."""
     # Obtener un proveedor de directorio público del seed
-    public_vendor = db.query(Vendor).filter(Vendor.is_public_directory == True).first()
+    public_vendor = db.query(Vendor).filter(Vendor.is_public_directory.is_(True)).first()
     assert public_vendor is not None
 
     # Intentar subir catálogo con multipart/form-data
@@ -171,7 +169,6 @@ def test_switch_mode_creates_dedicated_real_workspaces(client: TestClient):
         },
     )
     assert res2.status_code == 201
-    token2 = res2.json()["access_token"]
     ws2_id = res2.json()["workspace_id"]
 
     assert ws1_id != ws2_id, "Cada registro genera su propio workspace aislado"

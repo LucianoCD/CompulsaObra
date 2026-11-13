@@ -56,51 +56,59 @@ export const TractionEvidencePage: React.FC = () => {
           <span>Calculando métricas auditadas desde base de datos...</span>
         </div>
       ) : metrics ? (
-        <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-surface-elevated border border-surface-hairline rounded-container p-5 space-y-2 shadow-xs">
-            <div className="flex items-center justify-between text-content-secondary">
-              <dt className="text-xs font-bold uppercase tracking-wide font-sans">Estudios y Obras</dt>
-              <Users className="w-4 h-4 text-action-primary" />
+        <div className="space-y-4">
+          <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-surface-elevated border border-surface-hairline rounded-container p-5 space-y-2 shadow-xs">
+              <div className="flex items-center justify-between text-content-secondary">
+                <dt className="text-xs font-bold uppercase tracking-wide font-sans">Estudios y Obras</dt>
+                <Users className="w-4 h-4 text-action-primary" />
+              </div>
+              <dd className="text-3xl font-extrabold text-content-primary font-mono tabular-nums">
+                {metrics.active_real_workspaces}
+              </dd>
+              <p className="text-[11px] text-content-muted">
+                {metrics.active_real_users} usuario(s) reales verificados
+              </p>
             </div>
-            <dd className="text-3xl font-extrabold text-content-primary font-mono tabular-nums">
-              {metrics.active_real_workspaces}
-            </dd>
-            <p className="text-[11px] text-content-muted">Espacios de trabajo reales activos</p>
-          </div>
 
-          <div className="bg-surface-elevated border border-surface-hairline rounded-container p-5 space-y-2 shadow-xs">
-            <div className="flex items-center justify-between text-content-secondary">
-              <dt className="text-xs font-bold uppercase tracking-wide font-sans">Presupuestos Emitidos</dt>
-              <FileCheck className="w-4 h-4 text-action-primary" />
+            <div className="bg-surface-elevated border border-surface-hairline rounded-container p-5 space-y-2 shadow-xs">
+              <div className="flex items-center justify-between text-content-secondary">
+                <dt className="text-xs font-bold uppercase tracking-wide font-sans">Presupuestos Emitidos</dt>
+                <FileCheck className="w-4 h-4 text-action-primary" />
+              </div>
+              <dd className="text-3xl font-extrabold text-content-primary font-mono tabular-nums">
+                {metrics.real_budgets_generated}
+              </dd>
+              <p className="text-[11px] text-content-muted">
+                Compulsas congeladas ({metrics.verified_usage_events} eventos de uso)
+              </p>
             </div>
-            <dd className="text-3xl font-extrabold text-content-primary font-mono tabular-nums">
-              {metrics.real_budgets_generated}
-            </dd>
-            <p className="text-[11px] text-content-muted">Compulsas con snapshot HMAC emitido</p>
-          </div>
 
-          <div className="bg-surface-elevated border border-surface-hairline rounded-container p-5 space-y-2 shadow-xs">
-            <div className="flex items-center justify-between text-content-secondary">
-              <dt className="text-xs font-bold uppercase tracking-wide font-sans">Corralones Comparados</dt>
-              <Building className="w-4 h-4 text-action-primary" />
+            <div className="bg-surface-elevated border border-surface-hairline rounded-container p-5 space-y-2 shadow-xs">
+              <div className="flex items-center justify-between text-content-secondary">
+                <dt className="text-xs font-bold uppercase tracking-wide font-sans">Corralones Comparados</dt>
+                <Building className="w-4 h-4 text-action-primary" />
+              </div>
+              <dd className="text-3xl font-extrabold text-content-primary font-mono tabular-nums">
+                {metrics.real_vendors_compared}
+              </dd>
+              <p className="text-[11px] text-content-muted">Comercios cotizados en compras reales</p>
             </div>
-            <dd className="text-3xl font-extrabold text-content-primary font-mono tabular-nums">
-              {metrics.real_vendors_compared}
-            </dd>
-            <p className="text-[11px] text-content-muted">Comercios cotizados en compras reales</p>
-          </div>
 
-          <div className="bg-surface-elevated border border-surface-hairline rounded-container p-5 space-y-2 shadow-xs">
-            <div className="flex items-center justify-between text-content-secondary">
-              <dt className="text-xs font-bold uppercase tracking-wide font-sans">Tiempo Mediano</dt>
-              <Clock className="w-4 h-4 text-action-primary" />
+            <div className="bg-surface-elevated border border-surface-hairline rounded-container p-5 space-y-2 shadow-xs">
+              <div className="flex items-center justify-between text-content-secondary">
+                <dt className="text-xs font-bold uppercase tracking-wide font-sans">Tiempo Mediano</dt>
+                <Clock className="w-4 h-4 text-action-primary" />
+              </div>
+              <dd className="text-3xl font-extrabold text-emerald-700 dark:text-emerald-400 font-mono tabular-nums">
+                {metrics.median_elaboration_seconds}s
+              </dd>
+              <p className="text-[11px] text-content-muted">
+                {metrics.total_lines_processed} renglones procesados
+              </p>
             </div>
-            <dd className="text-3xl font-extrabold text-emerald-700 dark:text-emerald-400 font-mono tabular-nums">
-              {metrics.median_elaboration_seconds}s
-            </dd>
-            <p className="text-[11px] text-content-muted">De mensaje de WhatsApp a matriz optimizada</p>
-          </div>
-        </dl>
+          </dl>
+        </div>
       ) : null}
     </div>
   );

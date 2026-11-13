@@ -7,12 +7,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.security import generate_hmac_share_token
 from app.core.exceptions import CatalogImportValidationError, WorkspaceIsolationError
 from app.models.workspace import Workspace
 from app.models.vendor import Vendor, PriceList, VendorProduct
 from app.models.requisition import Requisition, RequisitionItem
-from app.models.comparison import ComparisonRun, ComparisonItemMatch
+from app.models.comparison import ComparisonRun
 from app.schemas.vendor import ColumnMappingSchema
 from app.services.catalog_importer import parse_argentina_currency, CatalogImporterService
 from app.services.comparison_optimizer import ComparisonOptimizerService
@@ -36,7 +35,7 @@ def test_image_upload_without_gemini_raises_503_never_preset(client: TestClient,
 
 def test_resolve_empty_payload_on_missing_critical_item_fails_422(client: TestClient, db: Session):
     """CO-03: Enviar PATCH /resolve con body vacío {} para un caño sin material ni diámetro debe dar 422."""
-    ws = db.query(Workspace).filter(Workspace.is_demo == True).first()
+    ws = db.query(Workspace).filter(Workspace.is_demo.is_(True)).first()
     assert ws is not None
 
     req = Requisition(
@@ -93,7 +92,7 @@ def test_argentine_currency_parsing_and_invalid_row_skipping():
 
 def test_split_cart_global_subset_optimization(db: Session):
     """CO-07: Comprueba que el Split Cart no caiga en la trampa voraz y optimice el costo global (material + fletes)."""
-    ws = db.query(Workspace).filter(Workspace.is_demo == True).first()
+    ws = db.query(Workspace).filter(Workspace.is_demo.is_(True)).first()
     assert ws is not None
 
     # Proveedor 1: Barato en conjunto, flete bajo ($2000)
@@ -176,7 +175,7 @@ def test_split_cart_global_subset_optimization(db: Session):
 
 def test_locked_budget_cannot_be_overridden_or_mutated(client: TestClient, db: Session):
     """BUG-04: Modificar o hacer override sobre una compulsa bloqueada debe retornar 409 Conflict."""
-    ws = db.query(Workspace).filter(Workspace.is_demo == True).first()
+    ws = db.query(Workspace).filter(Workspace.is_demo.is_(True)).first()
     assert ws is not None
 
     req = Requisition(workspace_id=ws.id, title="Requisición Bloqueada", status="LOCKED_BUDGET")
@@ -212,10 +211,10 @@ def test_locked_budget_cannot_be_overridden_or_mutated(client: TestClient, db: S
 
 def test_public_view_requires_valid_hmac_and_locked_status(client: TestClient, db: Session):
     """DOC-01: La vista pública exige token HMAC genuino y compulsa en estado LOCKED_BUDGET."""
-    ws = db.query(Workspace).filter(Workspace.is_demo == True).first()
+    ws = db.query(Workspace).filter(Workspace.is_demo.is_(True)).first()
     assert ws is not None
 
-    vendors = db.query(Vendor).filter(Vendor.is_public_directory == True).all()
+    vendors = db.query(Vendor).filter(Vendor.is_public_directory.is_(True)).all()
     vendor_ids = [str(v.id) for v in vendors]
 
     # 1. Ingestar y confirmar una requisición
@@ -256,22 +255,24 @@ def test_public_view_requires_valid_hmac_and_locked_status(client: TestClient, d
         headers={"X-Workspace-Id": str(ws.id)},
     )
     assert res_lock.status_code == 200
+    locked_token = res_lock.json()["public_share_token"]
 
-    # 6. Acceso público autorizado en modo client_budget
-    res_ok = client.get(f"/api/v1/public/comparisons/{valid_token}?mode=client_budget")
+    # 6. Acceso público autorizado en modo client_budget (DTO whitelist H-03 + snapshot HMAC H-04)
+    res_ok = client.get(f"/api/v1/public/comparisons/{locked_token}?mode=client_budget")
     assert res_ok.status_code == 200
     data = res_ok.json()
-    # Verificar sanitización estricta: nunca expone markup_pct, nombres de proveedores ni costos individuales
-    assert data["markup_pct"] == 0.0
-    assert data["vendors"] == []
-    assert data["best_single_vendor_name"] is None
-    assert all(len(r["vendor_cells"]) == 0 for r in data["matrix_rows"])
+    assert "markup_pct" not in data
+    assert "vendors" not in data
+    assert "split_cart" not in data
+    assert "best_single_vendor_name" not in data
+    assert data["signature_verified"] is True
+    assert len(data["items"]) == 1
 
 
 def test_catalog_importer_service_rejects_public_or_foreign_vendor_co03(db: Session):
     """CO-03: La capa de servicio de CatalogImporterService rechaza importar sobre comercios públicos o ajenos."""
-    ws1 = db.query(Workspace).filter(Workspace.is_demo == True).first()
-    public_vendor = db.query(Vendor).filter(Vendor.is_public_directory == True).first()
+    ws1 = db.query(Workspace).filter(Workspace.is_demo.is_(True)).first()
+    public_vendor = db.query(Vendor).filter(Vendor.is_public_directory.is_(True)).first()
     assert public_vendor is not None
 
     csv_data = b"sku,descripcion,precio_contado\nSKU1,Ca\xc3\xb1o PVC,1000\n"
@@ -314,8 +315,8 @@ def test_catalog_importer_service_rejects_public_or_foreign_vendor_co03(db: Sess
 
 def test_override_match_updates_run_totals_and_split_cart_co06(client: TestClient, db: Session):
     """CO-06: override_item_match actualiza las columnas relacionales de ComparisonRun y sincroniza Split Cart."""
-    ws = db.query(Workspace).filter(Workspace.is_demo == True).first()
-    vendors = db.query(Vendor).filter(Vendor.is_public_directory == True).all()
+    ws = db.query(Workspace).filter(Workspace.is_demo.is_(True)).first()
+    vendors = db.query(Vendor).filter(Vendor.is_public_directory.is_(True)).all()
 
     # 1. Ingestar pedido de 10 bolsas de cemento
     res_ingest = client.post(
@@ -368,6 +369,7 @@ def test_override_match_updates_run_totals_and_split_cart_co06(client: TestClien
         json={
             "vendor_product_id": str(alt_prod.id),
             "force_dimension_override": True,
+            "override_reason": "Reemplazo autorizado en prueba de regresión CO-06",
         },
         headers={"X-Workspace-Id": str(ws.id)},
     )
@@ -422,8 +424,8 @@ def test_acopio_price_basis_and_vendor_cash_discount_co09(db: Session):
 
 def test_xls_binary_import_and_upload_size_limit_co10_co11(client: TestClient, db: Session):
     """CO-10 / CO-11: Soporte de lectura de archivos .xls con xlrd y límite de tamaño 413."""
-    ws = db.query(Workspace).filter(Workspace.is_demo == True).first()
-    vendor = db.query(Vendor).filter(Vendor.workspace_id == ws.id, Vendor.is_public_directory == False).first()
+    ws = db.query(Workspace).filter(Workspace.is_demo.is_(True)).first()
+    vendor = db.query(Vendor).filter(Vendor.workspace_id == ws.id, Vendor.is_public_directory.is_(False)).first()
     if not vendor:
         vendor = Vendor(
             id=uuid.uuid4(),

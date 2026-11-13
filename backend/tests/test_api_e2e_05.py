@@ -1,12 +1,11 @@
 """Pruebas de endpoints REST y aislamiento estricto en /traccion (E2E-05)."""
 
 import uuid
-from decimal import Decimal
 from sqlalchemy import select
 from app.models.workspace import Workspace
-from app.models.vendor import Vendor, PriceList, VendorProduct
-from app.models.requisition import Requisition, RequisitionItem
-from app.models.comparison import ComparisonRun, ComparisonItemMatch
+from app.models.vendor import Vendor
+from app.models.requisition import Requisition
+from app.models.comparison import ComparisonRun
 
 
 def test_e2e_05_isolation_of_traction_metrics(client, db):
@@ -16,7 +15,7 @@ def test_e2e_05_isolation_of_traction_metrics(client, db):
     - GET /api/v1/public/traction DEBE contabilizar exactamente 2 presupuestos reales.
     """
     # 1. Crear workspace Demo con 10 comparativas
-    demo_ws = db.scalar(select(Workspace).where(Workspace.is_demo == True))
+    demo_ws = db.scalar(select(Workspace).where(Workspace.is_demo.is_(True)))
     assert demo_ws is not None
 
     req_demo = Requisition(
@@ -82,7 +81,7 @@ def test_e2e_05_isolation_of_traction_metrics(client, db):
 
 def test_lock_budget_and_pdf_generation(client, db):
     """Verifica congelamiento de presupuesto (lock-budget) y descarga de PDF vectorial."""
-    demo_ws = db.scalar(select(Workspace).where(Workspace.is_demo == True))
+    demo_ws = db.scalar(select(Workspace).where(Workspace.is_demo.is_(True)))
     vendors = db.scalars(select(Vendor).where(Vendor.workspace_id == demo_ws.id)).all()
     vendor_ids = [str(v.id) for v in vendors[:2]]
 

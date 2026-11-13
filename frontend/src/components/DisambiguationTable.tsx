@@ -16,10 +16,11 @@ interface DisambiguationTableProps {
 }
 
 export const DisambiguationTable: React.FC<DisambiguationTableProps> = ({ onProceedToCompare }) => {
-  const { currentRequisition, resolveItem, isLoading } = useRequisitionStore();
-  const { runComparison } = useComparisonStore();
+  const { currentRequisition, resolveItem, isLoading, error: reqError } = useRequisitionStore();
+  const { runComparison, error: compError } = useComparisonStore();
 
   const [saveAsAliasMap, setSaveAsAliasMap] = useState<Record<string, boolean>>({});
+  const [actionError, setActionError] = useState<string | null>(null);
   const firstAmbiguousButtonRef = useRef<HTMLButtonElement | null>(null);
 
   if (!currentRequisition) return null;
@@ -28,18 +29,24 @@ export const DisambiguationTable: React.FC<DisambiguationTableProps> = ({ onProc
   const pendingCount = currentRequisition.pending_clarifications_count;
   const allResolved = pendingCount === 0;
 
-  const handleQuickResolve = (item: RequisitionItemResponse, materialValue: string, materialLabel: string) => {
+  const handleQuickResolve = async (item: RequisitionItemResponse, materialValue: string, materialLabel: string) => {
+    setActionError(null);
     const saveAlias = !!saveAsAliasMap[item.id];
     const confirmedTerm = `${item.requested_term} ${materialLabel}`.trim();
 
-    resolveItem(item.id, {
-      material_type: materialValue,
-      confirmed_term: confirmedTerm,
-      save_as_alias: saveAlias,
-    });
+    try {
+      await resolveItem(item.id, {
+        material_type: materialValue,
+        confirmed_term: confirmedTerm,
+        save_as_alias: saveAlias,
+      });
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo guardar la aclaración del material.');
+    }
   };
 
   const handleStartComparison = async () => {
+    setActionError(null);
     if (!allResolved) {
       // ISO/IEC 25010 & WCAG 3.3.4: Guiar el foco al primer botón ambiguo
       if (firstAmbiguousButtonRef.current) {
@@ -47,8 +54,12 @@ export const DisambiguationTable: React.FC<DisambiguationTableProps> = ({ onProc
       }
       return;
     }
-    await runComparison(currentRequisition.id);
-    onProceedToCompare();
+    try {
+      await runComparison(currentRequisition.id);
+      onProceedToCompare();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'Error al ejecutar la compulsa multi-corralón.');
+    }
   };
 
   return (
@@ -213,6 +224,15 @@ export const DisambiguationTable: React.FC<DisambiguationTableProps> = ({ onProc
           </tbody>
         </table>
       </div>
+
+      {(actionError || reqError || compError) && (
+        <div
+          role="alert"
+          className="p-3 rounded-control bg-semantic-dangerBg border border-red-400/50 text-semantic-dangerText text-xs font-medium"
+        >
+          {actionError || compError || reqError}
+        </div>
+      )}
 
       {/* Botón de Ejecución de Compulsa con Blindaje ISO/IEC 25010 y WCAG 3.3.4 */}
       <div className="pt-3 border-t border-surface-hairline flex flex-col sm:flex-row items-center justify-between gap-3">

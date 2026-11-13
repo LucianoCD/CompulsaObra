@@ -164,17 +164,57 @@ export interface RequisitionDetailResponse {
   pending_clarifications_count: number;
 }
 
+export type BudgetStrategy = 'SPLIT_CART' | 'SINGLE_VENDOR';
+export type FulfillmentStatus = 'complete' | 'partial' | 'pending';
+
+export interface CandidateOption {
+  vendor_product_id: string;
+  sku?: string | null;
+  description: string;
+  unit_price_ars?: number | null;
+  sale_unit?: string | null;
+  similarity_score?: number | null;
+  diameter_mm?: number | null;
+  length_m?: number | null;
+  weight_kg?: number | null;
+  material_type?: string | null;
+}
+
+export interface OverrideAuditEntry {
+  user_id?: string | null;
+  user_email?: string | null;
+  timestamp: string;
+  reason?: string | null;
+  discrepancies: string[];
+  forced_override: boolean;
+  previous_product_id?: string | null;
+  new_product_id: string;
+  requisition_item_id?: string | null;
+  vendor_id?: string | null;
+}
+
 export interface RunComparisonRequest {
   vendor_ids: string[];
   payment_modality: PaymentModality;
   markup_pct: number;
   include_delivery_fees: boolean;
+  budget_strategy?: BudgetStrategy;
+  selected_single_vendor_id?: string | null;
+  existing_run_id?: string | null;
+  persist?: boolean;
 }
 
 export interface ManualVendorMatchOverride {
   vendor_product_id: string;
   save_vendor_alias?: boolean;
   force_dimension_override?: boolean;
+  override_reason?: string | null;
+}
+
+export interface LockBudgetRequest {
+  accept_partial?: boolean;
+  strategy?: BudgetStrategy;
+  selected_single_vendor_id?: string | null;
 }
 
 export interface ComparisonVendorSummary {
@@ -198,11 +238,16 @@ export interface ComparisonItemCell {
   vendor_product_id?: string | null;
   product_sku?: string | null;
   product_description?: string | null;
+  sale_unit?: string | null;
+  commercial_qty?: number | null;
+  conversion_note?: string | null;
   unit_price_ars?: number | null;
   line_subtotal_ars?: number | null;
   similarity_score?: number | null;
   is_best_price: boolean;
   is_selected_split: boolean;
+  candidate_options?: CandidateOption[];
+  override_audit?: OverrideAuditEntry | null;
 }
 
 export interface ComparisonItemRow {
@@ -212,8 +257,12 @@ export interface ComparisonItemRow {
   quantity: number;
   requested_unit: string;
   diameter_mm?: number | null;
+  length_m?: number | null;
+  weight_kg?: number | null;
   material_type?: string | null;
   vendor_cells: ComparisonItemCell[];
+  lowest_unit_price_ars?: number | null;
+  lowest_line_subtotal_ars?: number | null;
   lowest_price_ars?: number | null;
   winning_vendor_id?: string | null;
 }
@@ -231,9 +280,15 @@ export interface SplitCartSummary {
 export interface ComparisonMatrixResponse {
   run_id: string;
   requisition_id: string;
+  status: string;
+  fulfillment_status: FulfillmentStatus;
+  unresolved_items_count: number;
+  ambiguous_items_count: number;
   payment_modality: PaymentModality;
   markup_pct: number;
   include_delivery_fees: boolean;
+  budget_strategy: BudgetStrategy;
+  selected_single_vendor_id?: string | null;
   best_single_vendor_id?: string | null;
   best_single_vendor_name?: string | null;
   best_single_total_ars?: number | null;
@@ -241,13 +296,49 @@ export interface ComparisonMatrixResponse {
   vendors: ComparisonVendorSummary[];
   matrix_rows: ComparisonItemRow[];
   public_share_token: string;
+  snapshot_content_hash?: string | null;
+  override_audit_log?: OverrideAuditEntry[];
   created_at: string;
+}
+
+export interface PublicClientBudgetItemRow {
+  requisition_item_id: string;
+  line_order: number;
+  canonical_name: string;
+  requested_qty: number;
+  requested_unit: string;
+  commercial_qty?: number | null;
+  sale_unit?: string | null;
+  conversion_note?: string | null;
+  client_unit_price_ars?: number | null;
+  client_subtotal_ars?: number | null;
+  covered: boolean;
+}
+
+export interface PublicClientBudgetResponse {
+  run_id: string;
+  requisition_id: string;
+  title: string;
+  client_name?: string | null;
+  status: string;
+  fulfillment_status: FulfillmentStatus;
+  budget_strategy: BudgetStrategy;
+  payment_modality: PaymentModality;
+  items: PublicClientBudgetItemRow[];
+  materials_subtotal_ars: number;
+  logistics_ars: number;
+  grand_total_ars: number;
+  created_at: string;
+  locked_at?: string | null;
+  signature_verified: boolean;
 }
 
 export interface TractionMetricsResponse {
   active_real_workspaces: number;
+  active_real_users: number;
   real_vendors_compared: number;
   real_budgets_generated: number;
+  verified_usage_events: number;
   total_lines_processed: number;
   median_elaboration_seconds: number;
 }
@@ -258,6 +349,9 @@ export interface LockBudgetResponse {
   share_url: string;
   pdf_url: string;
   status: string;
+  fulfillment_status: FulfillmentStatus;
+  budget_strategy: BudgetStrategy;
+  snapshot_content_hash: string;
 }
 
 export interface SessionResponse {
@@ -268,6 +362,9 @@ export interface SessionResponse {
   is_demo: boolean;
   role: UserRole;
   email: string;
+  email_verified?: boolean;
+  verification_required?: boolean;
+  verification_token?: string | null;
 }
 
 export interface RegisterRequest {

@@ -24,20 +24,20 @@ export const IngestionDropzone: React.FC = () => {
   const handleTextSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!rawText.trim()) return;
-    ingestText(title, rawText);
+    void ingestText(title, rawText).catch(() => {});
   };
 
   const handleFileSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedFile) return;
-    ingestFile(title, selectedFile);
+    void ingestFile(title, selectedFile).catch(() => {});
   };
 
   const handleKeyDownTextarea = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
       if (rawText.trim()) {
-        ingestText(title, rawText);
+        void ingestText(title, rawText).catch(() => {});
       }
     }
   };
@@ -122,7 +122,7 @@ export const IngestionDropzone: React.FC = () => {
         {activeTab === 'presets' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <button
-              onClick={() => ingestPreset('whatsapp_jerga_noa')}
+              onClick={() => { void ingestPreset('whatsapp_jerga_noa').catch(() => {}); }}
               disabled={isLoading}
               type="button"
               className="text-left p-3.5 rounded-control bg-surface-subtle hover:bg-surface-elevated border border-surface-hairline hover:border-surface-strong transition group flex flex-col justify-between min-h-[140px]"
@@ -150,7 +150,7 @@ export const IngestionDropzone: React.FC = () => {
             </button>
 
             <button
-              onClick={() => ingestPreset('manuscrito_obra')}
+              onClick={() => { void ingestPreset('manuscrito_obra').catch(() => {}); }}
               disabled={isLoading}
               type="button"
               className="text-left p-3.5 rounded-control bg-semantic-hitlBg/40 hover:bg-semantic-hitlBg/70 border border-semantic-hitlBorder/60 hover:border-semantic-hitlBorder transition group flex flex-col justify-between min-h-[140px]"
@@ -178,7 +178,7 @@ export const IngestionDropzone: React.FC = () => {
             </button>
 
             <button
-              onClick={() => ingestPreset('computo_tecnico')}
+              onClick={() => { void ingestPreset('computo_tecnico').catch(() => {}); }}
               disabled={isLoading}
               type="button"
               className="text-left p-3.5 rounded-control bg-surface-subtle hover:bg-surface-elevated border border-surface-hairline hover:border-surface-strong transition group flex flex-col justify-between min-h-[140px]"

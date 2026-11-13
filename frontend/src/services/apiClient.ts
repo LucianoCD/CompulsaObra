@@ -17,7 +17,10 @@ import {
   ComparisonMatrixResponse,
   RunComparisonRequest,
   ManualVendorMatchOverride,
+  LockBudgetRequest,
   LockBudgetResponse,
+  PublicClientBudgetResponse,
+  BudgetStrategy,
   TractionMetricsResponse,
   UserRole,
 } from '../types/api';
@@ -56,6 +59,7 @@ class ApiClient {
 
     const response = await fetch(`${BASE_URL}${endpoint}`, {
       ...options,
+      credentials: 'include',
       headers,
     });
 
@@ -106,6 +110,12 @@ class ApiClient {
     });
   }
 
+  public async logout(): Promise<{ status: string }> {
+    return this.request<{ status: string }>('/auth/logout', {
+      method: 'POST',
+    });
+  }
+
   public async switchMode(isDemo: boolean, role: UserRole = 'ESTIMATOR'): Promise<SessionResponse> {
     return this.request<SessionResponse>('/auth/switch-mode', {
       method: 'POST',
@@ -153,6 +163,7 @@ class ApiClient {
 
     const response = await fetch(`${BASE_URL}/vendors/${vendorId}/catalogs/import`, {
       method: 'POST',
+      credentials: 'include',
       headers,
       body: formData,
     });
@@ -176,6 +187,7 @@ class ApiClient {
 
     const response = await fetch(`${BASE_URL}/requisitions/ingest`, {
       method: 'POST',
+      credentials: 'include',
       headers,
       body: formData,
     });
@@ -243,19 +255,75 @@ class ApiClient {
     });
   }
 
-  public async lockBudget(runId: string): Promise<LockBudgetResponse> {
+  public async lockBudget(runId: string, payload: LockBudgetRequest = {}): Promise<LockBudgetResponse> {
     return this.request<LockBudgetResponse>(`/comparisons/${runId}/lock-budget`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     });
   }
 
-  public getPdfUrl(runId: string, mode: 'comparison' | 'client_budget' = 'comparison'): string {
-    return `${BASE_URL}/comparisons/${runId}/pdf?mode=${mode}`;
+  public getPdfUrl(
+    runId: string,
+    mode: 'comparison' | 'client_budget' = 'comparison',
+    strategy: BudgetStrategy = 'SPLIT_CART',
+    singleVendorId?: string | null
+  ): string {
+    const params = new URLSearchParams({ mode, strategy });
+    if (singleVendorId) {
+      params.set('single_vendor_id', singleVendorId);
+    }
+    return `${BASE_URL}/comparisons/${runId}/pdf?${params.toString()}`;
+  }
+
+  public async downloadPdfBlob(
+    runId: string,
+    mode: 'comparison' | 'client_budget' = 'comparison',
+    strategy: BudgetStrategy = 'SPLIT_CART',
+    singleVendorId?: string | null
+  ): Promise<Blob> {
+    const url = this.getPdfUrl(runId, mode, strategy, singleVendorId);
+    const response = await fetch(url, {
+      method: 'GET',
+      credentials: 'include',
+      headers: this.getHeaders(),
+    });
+    if (!response.ok) {
+      let detail = `Error HTTP ${response.status} al descargar PDF`;
+      try {
+        const errJson = await response.json();
+        detail = errJson?.detail || errJson?.error?.message || detail;
+      } catch {
+        // Sin cuerpo JSON
+      }
+      throw new Error(detail);
+    }
+    return response.blob();
+  }
+
+  public async triggerPdfDownload(
+    runId: string,
+    mode: 'comparison' | 'client_budget' = 'comparison',
+    strategy: BudgetStrategy = 'SPLIT_CART',
+    singleVendorId?: string | null
+  ): Promise<void> {
+    const blob = await this.downloadPdfBlob(runId, mode, strategy, singleVendorId);
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `compulsa_${mode}_${runId.slice(0, 8)}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } finally {
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    }
   }
 
   // --- Público y Tracción ---
-  public async getPublicComparison(shareToken: string): Promise<ComparisonMatrixResponse> {
-    return this.request<ComparisonMatrixResponse>(`/public/comparisons/${shareToken}`);
+  public async getPublicComparison(shareToken: string): Promise<PublicClientBudgetResponse> {
+    return this.request<PublicClientBudgetResponse>(`/public/comparisons/${shareToken}?mode=client_budget`);
   }
 
   public async getTractionMetrics(): Promise<TractionMetricsResponse> {

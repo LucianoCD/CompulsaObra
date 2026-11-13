@@ -1,5 +1,5 @@
 /**
- * Store global Zustand para Requisiciones, Ingesta Multimodal y Desambiguación HITL.
+ * Store global Zustand para Requisiciones, Ingesta Multimodal y Desambiguación HITL (H-15).
  */
 
 import { create } from 'zustand';
@@ -21,74 +21,70 @@ interface RequisitionState {
   resetRequisition: () => void;
 }
 
+const runRequisitionRequest = async (
+  set: (partial: Partial<RequisitionState>) => void,
+  action: () => Promise<RequisitionDetailResponse>,
+  fallbackError: string
+) => {
+  try {
+    set({ isLoading: true, error: null });
+    const req = await action();
+    set({ currentRequisition: req, isLoading: false });
+  } catch (err: unknown) {
+    set({
+      isLoading: false,
+      error: err instanceof Error ? err.message : fallbackError,
+    });
+    throw err;
+  }
+};
+
 export const useRequisitionStore = create<RequisitionState>((set, get) => ({
   currentRequisition: null,
   isLoading: false,
   error: null,
 
-  ingestPreset: async (presetId: string) => {
-    try {
-      set({ isLoading: true, error: null });
-      const req = await apiClient.ingestRequisitionJson({
-        title: `Pedido desde Preset: ${presetId}`,
-        preset_id: presetId,
-      });
-      set({ currentRequisition: req, isLoading: false });
-    } catch (err: unknown) {
-      set({
-        isLoading: false,
-        error: err instanceof Error ? err.message : 'Error al cargar preset',
-      });
-    }
-  },
+  ingestPreset: async (presetId: string) =>
+    runRequisitionRequest(
+      set,
+      () =>
+        apiClient.ingestRequisitionJson({
+          title: `Pedido desde Preset: ${presetId}`,
+          preset_id: presetId,
+        }),
+      'Error al cargar preset'
+    ),
 
-  ingestText: async (title: string, rawText: string) => {
-    try {
-      set({ isLoading: true, error: null });
-      const req = await apiClient.ingestRequisitionJson({
-        title: title || 'Pedido de Materiales',
-        raw_text: rawText,
-      });
-      set({ currentRequisition: req, isLoading: false });
-    } catch (err: unknown) {
-      set({
-        isLoading: false,
-        error: err instanceof Error ? err.message : 'Error al procesar texto',
-      });
-    }
-  },
+  ingestText: async (title: string, rawText: string) =>
+    runRequisitionRequest(
+      set,
+      () =>
+        apiClient.ingestRequisitionJson({
+          title: title || 'Pedido de Materiales',
+          raw_text: rawText,
+        }),
+      'Error al procesar texto'
+    ),
 
   ingestFile: async (title: string, file: File) => {
-    try {
-      set({ isLoading: true, error: null });
-      const formData = new FormData();
-      formData.append('title', title || 'Pedido desde Imagen');
-      formData.append('image_file', file);
-
-      const req = await apiClient.ingestRequisitionForm(formData);
-      set({ currentRequisition: req, isLoading: false });
-    } catch (err: unknown) {
-      set({
-        isLoading: false,
-        error: err instanceof Error ? err.message : 'Error al procesar imagen',
-      });
-    }
+    const formData = new FormData();
+    formData.append('title', title || 'Pedido desde Imagen');
+    formData.append('image_file', file);
+    return runRequisitionRequest(
+      set,
+      () => apiClient.ingestRequisitionForm(formData),
+      'Error al procesar imagen'
+    );
   },
 
   resolveItem: async (itemId: string, payload: ItemClarificationResolveRequest) => {
     const current = get().currentRequisition;
     if (!current) return;
-
-    try {
-      set({ isLoading: true, error: null });
-      const updated = await apiClient.resolveItem(current.id, itemId, payload);
-      set({ currentRequisition: updated, isLoading: false });
-    } catch (err: unknown) {
-      set({
-        isLoading: false,
-        error: err instanceof Error ? err.message : 'Error al resolver ítem',
-      });
-    }
+    return runRequisitionRequest(
+      set,
+      () => apiClient.resolveItem(current.id, itemId, payload),
+      'Error al resolver ítem'
+    );
   },
 
   resetRequisition: () => {

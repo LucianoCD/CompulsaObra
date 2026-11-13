@@ -2,12 +2,16 @@
 
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 from decimal import Decimal
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.comparison import ComparisonItemMatch, ComparisonRun
+    from app.models.workspace import Workspace
 
 
 class Requisition(Base):

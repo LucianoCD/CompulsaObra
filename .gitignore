@@ -16,6 +16,7 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+*.egg-info/
 frontend/dist/
 frontend/build/
 
@@ -27,3 +28,9 @@ frontend/build/
 .vscode/
 .idea/
 *.swp
+
+# Archivos internos / desarrollo excluidos de la presentación formal
+repomix-output.xml
+.agents/
+AGENTS.md
+especificaci_n_funcional_cotizaobra_ai_comparador.md

@@ -1,14 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { apiClient } from '../services/apiClient';
-import { ComparisonMatrixResponse } from '../types/api';
-import { Download, Lock, ArrowLeft, Loader2, FileText } from 'lucide-react';
+import { PublicClientBudgetResponse } from '../types/api';
+import { Lock, ArrowLeft, Loader2, FileText, ShieldCheck, AlertTriangle } from 'lucide-react';
 
 interface PublicBudgetViewPageProps {
   shareToken: string;
 }
 
 export const PublicBudgetViewPage: React.FC<PublicBudgetViewPageProps> = ({ shareToken }) => {
-  const [data, setData] = useState<ComparisonMatrixResponse | null>(null);
+  const [data, setData] = useState<PublicClientBudgetResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,14 +24,14 @@ export const PublicBudgetViewPage: React.FC<PublicBudgetViewPageProps> = ({ shar
         setError(err instanceof Error ? err.message : 'Presupuesto no encontrado o enlace caducado');
       }
     }
-    loadSnapshot();
+    void loadSnapshot();
   }, [shareToken]);
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center text-content-secondary gap-2 text-xs font-sans">
         <Loader2 className="w-5 h-5 animate-spin text-action-primary" />
-        <span>Cargando pliego presupuestario sellado...</span>
+        <span>Cargando presupuesto oficial sellado...</span>
       </div>
     );
   }
@@ -42,9 +42,9 @@ export const PublicBudgetViewPage: React.FC<PublicBudgetViewPageProps> = ({ shar
         <div className="w-12 h-12 rounded-full bg-action-danger/10 border border-action-danger/30 text-action-danger flex items-center justify-center mx-auto text-xl font-bold font-mono">
           !
         </div>
-        <h2 className="text-base font-bold text-content-primary">Enlace No Válido o No Emitido</h2>
+        <h2 className="text-base font-bold text-content-primary">Enlace No Válido o Integridad Comprometida</h2>
         <p className="text-xs text-content-secondary leading-relaxed">
-          {error || 'El presupuesto solicitado no ha sido congelado o el token de firma no es válido.'}
+          {error || 'El presupuesto solicitado no ha sido congelado o la firma HMAC-SHA256 no es válida.'}
         </p>
         <a
           href="/"
@@ -59,35 +59,34 @@ export const PublicBudgetViewPage: React.FC<PublicBudgetViewPageProps> = ({ shar
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-6 font-sans">
-      {/* Cabecera del Presupuesto Compartido */}
+      {/* Cabecera del Presupuesto Público Oficial (H-03 / H-04) */}
       <div className="bg-surface-elevated border border-surface-hairline rounded-container p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 mb-1.5">
+          <div className="flex flex-wrap items-center gap-2 mb-1.5">
             <span className="text-xs font-mono uppercase px-2 py-0.5 rounded-control bg-semantic-winnerBg text-semantic-winnerText border border-surface-hairline flex items-center gap-1 font-bold">
-              <Lock className="w-3 h-3 text-emerald-600 dark:text-emerald-400" /> Snapshot Inmutable HMAC-SHA256
+              <Lock className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+              {data.signature_verified ? 'Snapshot Inmutable HMAC-SHA256 Verificado' : 'Snapshot Sellado'}
             </span>
+            {data.fulfillment_status === 'partial' && (
+              <span className="text-xs font-mono uppercase px-2 py-0.5 rounded-control bg-semantic-hitlBg text-semantic-hitlText border border-semantic-hitlBorder flex items-center gap-1 font-bold">
+                <AlertTriangle className="w-3 h-3" /> Presupuesto Parcial
+              </span>
+            )}
             <span className="text-xs text-content-muted font-mono">
               Emitido: {data.created_at.slice(0, 10)}
             </span>
           </div>
           <h1 className="text-lg font-display font-extrabold text-content-primary tracking-tight">
-            Pliego Presupuestario y Comparativa de Materiales
+            {data.title}
           </h1>
           <p className="text-xs text-content-secondary mt-0.5 font-mono">
-            Modalidad: <strong>{data.payment_modality}</strong> | Corralones cotizados: <strong>{data.vendors.length}</strong>
+            {data.client_name ? `Cliente: ${data.client_name} | ` : ''}
+            Modalidad: <strong>{data.payment_modality}</strong> | Estrategia:{' '}
+            <strong>{data.budget_strategy === 'SINGLE_VENDOR' ? 'Compra Unificada' : 'Entrega Optimizada'}</strong>
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <a
-            href={`/api/v1/public/comparisons/${shareToken}?format=pdf&mode=comparison`}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-control bg-surface-subtle hover:bg-surface-canvas border border-surface-hairline text-content-primary text-xs font-semibold transition"
-          >
-            <Download className="w-3.5 h-3.5 text-action-primary" />
-            <span>PDF Comparativa</span>
-          </a>
           <a
             href={`/api/v1/public/comparisons/${shareToken}?format=pdf&mode=client_budget`}
             target="_blank"
@@ -95,67 +94,84 @@ export const PublicBudgetViewPage: React.FC<PublicBudgetViewPageProps> = ({ shar
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-control bg-action-primary hover:bg-action-hover text-white font-bold text-xs shadow-sm transition"
           >
             <FileText className="w-3.5 h-3.5" />
-            <span>Descargar Presupuesto Oficial</span>
+            <span>Descargar Presupuesto Oficial PDF</span>
           </a>
         </div>
       </div>
 
-      {/* Resumen Comparativo */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 font-mono">
+      {/* Resumen Financiero para el Cliente Final */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 font-mono">
         <div className="bg-surface-elevated border border-surface-hairline rounded-container p-4">
           <div className="text-[10px] font-bold text-content-muted uppercase tracking-wider font-sans">
-            Estrategia A · Mejor Proveedor Único
+            Subtotal Materiales
           </div>
-          <div className="text-sm font-bold text-content-primary mt-1 font-sans truncate">
-            {data.best_single_vendor_name || 'Comercio Único'}
-          </div>
-          <div className="text-xl font-extrabold text-content-primary tabular-nums mt-1">
-            $ {data.best_single_total_ars?.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+          <div className="text-lg font-extrabold text-content-primary tabular-nums mt-1">
+            $ {data.materials_subtotal_ars.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
           </div>
         </div>
 
         <div className="bg-surface-elevated border border-surface-hairline rounded-container p-4">
           <div className="text-[10px] font-bold text-content-muted uppercase tracking-wider font-sans">
-            Estrategia B · Compra Dividida Óptima (Split Cart)
+            Logística y Flete Estimado
           </div>
-          <div className="text-sm font-bold text-content-primary mt-1 font-sans">
-            {data.split_cart.participating_vendors_count} Comercios con Mejor Precio
+          <div className="text-lg font-extrabold text-content-primary tabular-nums mt-1">
+            $ {data.logistics_ars.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+          </div>
+        </div>
+
+        <div className="bg-semantic-winnerBg/50 border border-emerald-600/50 rounded-container p-4">
+          <div className="text-[10px] font-bold text-semantic-winnerText uppercase tracking-wider font-sans flex items-center gap-1">
+            <ShieldCheck className="w-3.5 h-3.5" /> Total Final Presupuesto
           </div>
           <div className="text-xl font-extrabold text-emerald-700 dark:text-emerald-400 tabular-nums mt-1">
-            $ {data.split_cart.total_cart_ars.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+            $ {data.grand_total_ars.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
           </div>
-          {data.split_cart.savings_vs_single_vendor_ars > 0 && (
-            <div className="text-xs text-semantic-winnerText font-bold mt-1 font-sans">
-              Ahorro neto de bolsillo: -$ {data.split_cart.savings_vs_single_vendor_ars.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
-            </div>
-          )}
         </div>
       </div>
 
       {/* Tabla de Renglones Cotizados */}
       <div className="bg-surface-elevated border border-surface-hairline rounded-container p-5 shadow-xs overflow-x-auto">
         <h2 className="text-sm font-bold text-content-primary mb-3 font-display">
-          Detalle de Renglones y Precios Unitarios
+          Detalle de Materiales Presupuestados ({data.items.length} ítems)
         </h2>
         <table className="w-full text-left text-xs border-collapse">
           <thead>
             <tr className="border-b border-surface-hairline bg-surface-subtle text-content-secondary uppercase text-[11px] font-semibold tracking-wider">
               <th className="py-2.5 px-3 w-10">#</th>
               <th className="py-2.5 px-3">Descripción de Material</th>
-              <th className="py-2.5 px-3 text-center">Cantidad</th>
-              <th className="py-2.5 px-3 text-right">Mejor Precio</th>
+              <th className="py-2.5 px-3 text-center">Solicitado</th>
+              <th className="py-2.5 px-3 text-center">Cotización Comercial</th>
+              <th className="py-2.5 px-3 text-right">Precio Unit.</th>
+              <th className="py-2.5 px-3 text-right">Subtotal</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-surface-hairline font-mono">
-            {data.matrix_rows.map((row) => (
-              <tr key={row.requisition_item_id} className="hover:bg-surface-subtle/30">
-                <td className="py-2.5 px-3 text-content-muted font-sans font-semibold">{row.line_order}</td>
-                <td className="py-2.5 px-3 font-medium text-content-primary font-sans">{row.requested_term}</td>
+            {data.items.map((item) => (
+              <tr key={item.requisition_item_id} className="hover:bg-surface-subtle/30">
+                <td className="py-2.5 px-3 text-content-muted font-sans font-semibold">{item.line_order}</td>
+                <td className="py-2.5 px-3 font-medium text-content-primary font-sans">
+                  <div>{item.canonical_name}</div>
+                  {item.conversion_note && (
+                    <div className="text-[10px] text-content-secondary mt-0.5">{item.conversion_note}</div>
+                  )}
+                </td>
                 <td className="py-2.5 px-3 text-center text-content-secondary tabular-nums">
-                  {row.quantity} {row.requested_unit}
+                  {item.requested_qty} {item.requested_unit}
+                </td>
+                <td className="py-2.5 px-3 text-center text-content-secondary tabular-nums">
+                  {item.commercial_qty != null && item.sale_unit
+                    ? `${item.commercial_qty} ${item.sale_unit}`
+                    : `${item.requested_qty} ${item.requested_unit}`}
+                </td>
+                <td className="py-2.5 px-3 text-right tabular-nums text-content-primary">
+                  {item.client_unit_price_ars != null
+                    ? `$ ${item.client_unit_price_ars.toLocaleString('es-AR', { minimumFractionDigits: 2 })}`
+                    : '-'}
                 </td>
                 <td className="py-2.5 px-3 text-right font-extrabold text-emerald-700 dark:text-emerald-400 tabular-nums">
-                  $ {row.lowest_price_ars?.toLocaleString('es-AR', { minimumFractionDigits: 2 }) || 'Sin cotización'}
+                  {item.covered && item.client_subtotal_ars != null
+                    ? `$ ${item.client_subtotal_ars.toLocaleString('es-AR', { minimumFractionDigits: 2 })}`
+                    : 'Sin cobertura'}
                 </td>
               </tr>
             ))}

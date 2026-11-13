@@ -1,10 +1,24 @@
-"""Normalizador físico determinista de unidades, pulgadas a mm y jerga del NOA."""
+"""Normalizador físico determinista de unidades, pulgadas a mm por familia y jerga del NOA."""
 
 import re
 import unicodedata
-from typing import List, Optional, Tuple, Dict
+from typing import Dict, List, Optional, Tuple
 from app.schemas.dimensions import NormalizedItemDraft
 
+# Mapa físico exacto (1 pulgada = 25.40 mm)
+PHYSICAL_INCH_TO_MM_MAP: Dict[str, float] = {
+    "1/2": 12.70,
+    "3/4": 19.05,
+    "1": 25.40,
+    "1 1/4": 31.75,
+    "1 1/2": 38.10,
+    "2": 50.80,
+    "2 1/2": 63.50,
+    "3": 76.20,
+    "4": 101.60,
+}
+
+# Compatibilidad de mapa global comercial heredado para pruebas/consultas genéricas
 INCH_TO_MM_MAP: Dict[str, float] = {
     "1/2": 12.70,
     "3/4": 19.05,
@@ -17,6 +31,55 @@ INCH_TO_MM_MAP: Dict[str, float] = {
     "4": 110.00,  # Equivalencia sanitaria PVC cloacal estándar
 }
 
+# Equivalencias comerciales por familia constructiva (H-06):
+# El primer valor representa el diámetro primario asignado en parsing; la lista completa son equivalentes aceptados en matching.
+FAMILY_NOMINAL_INCH_TO_MM_MAP: Dict[str, Dict[str, List[float]]] = {
+    "PVC": {
+        "1/2": [12.70, 20.00],
+        "3/4": [19.05, 25.00],
+        "1": [25.40, 32.00],
+        "1 1/4": [31.75, 40.00],
+        "1 1/2": [38.10, 40.00, 50.00],
+        "2": [50.80, 50.00, 63.00],
+        "2 1/2": [63.50, 63.00, 75.00],
+        "3": [75.00, 76.20],
+        "4": [110.00],
+    },
+    "Termofusión": {
+        "1/2": [12.70, 20.00],
+        "3/4": [19.05, 20.00, 25.00],
+        "1": [25.40, 32.00],
+        "1 1/4": [31.75, 40.00],
+        "1 1/2": [38.10, 50.00],
+        "2": [50.80, 63.00],
+        "2 1/2": [63.50, 75.00],
+        "3": [75.00, 76.20, 90.00],
+        "4": [110.00],
+    },
+    "Polipropileno": {
+        "1/2": [12.70, 20.00],
+        "3/4": [19.05, 20.00, 25.00],
+        "1": [25.40, 32.00],
+        "1 1/4": [31.75, 40.00],
+        "1 1/2": [38.10, 50.00],
+        "2": [50.80, 63.00],
+        "2 1/2": [63.50, 75.00],
+        "3": [75.00, 76.20, 90.00],
+        "4": [110.00],
+    },
+    "Corrugado": {
+        "1/2": [12.70, 16.00],
+        "3/4": [19.05, 20.00],
+        "1": [25.40, 25.00],
+        "1 1/4": [31.75, 32.00],
+        "1 1/2": [38.10, 40.00],
+        "2": [50.80, 50.00],
+    },
+    "Acero": {
+        k: [v] for k, v in PHYSICAL_INCH_TO_MM_MAP.items()
+    },
+}
+
 MATERIAL_FAMILIES = ["caño", "cano", "tubo", "codo", "tee", "cupla", "union"]
 
 KNOWN_MATERIALS = {
@@ -25,7 +88,7 @@ KNOWN_MATERIALS = {
     "termo fusión": "Termofusión",
     "polipropileno": "Polipropileno",
     "corrugado": "Corrugado",
-    "hierro": "Acero",  # Unificado con Acero para coherencia entre catálogo y pedido
+    "hierro": "Acero",
     "acero": "Acero",
     "chapa": "Chapa",
     "cemento": "Cemento",
@@ -66,31 +129,75 @@ def normalize_material_label(mat: Optional[str]) -> Optional[str]:
     return mat.strip()
 
 
-
 class UnitNormalizerService:
     """Servicio de normalización física y lingüística de materiales de construcción."""
 
     @classmethod
+    def resolve_inch_to_mm_by_family(
+        cls,
+        inch_str: str,
+        material_type: Optional[str] = None,
+    ) -> Optional[float]:
+        """Convierte pulgadas fraccionarias a milímetros diferenciando familia nominal vs física (H-06)."""
+        norm_mat = normalize_material_label(material_type)
+        if norm_mat and norm_mat in FAMILY_NOMINAL_INCH_TO_MM_MAP:
+            family_map = FAMILY_NOMINAL_INCH_TO_MM_MAP[norm_mat]
+            if inch_str in family_map:
+                return family_map[inch_str][0]
+        if inch_str in PHYSICAL_INCH_TO_MM_MAP:
+            return PHYSICAL_INCH_TO_MM_MAP[inch_str]
+        return INCH_TO_MM_MAP.get(inch_str)
+
+    @classmethod
+    def get_equivalent_diameters_mm(
+        cls,
+        diameter_mm: float,
+        material_type: Optional[str] = None,
+        diameter_inch: Optional[str] = None,
+    ) -> List[float]:
+        """Retorna diámetros comerciales equivalentes dentro de la misma familia sin mezcla física/nominal (H-06)."""
+        norm_mat = normalize_material_label(material_type)
+        candidates: List[float] = [float(diameter_mm)]
+
+        if not norm_mat or norm_mat not in FAMILY_NOMINAL_INCH_TO_MM_MAP:
+            return candidates
+
+        family_map = FAMILY_NOMINAL_INCH_TO_MM_MAP[norm_mat]
+        if diameter_inch and diameter_inch in family_map:
+            for val in family_map[diameter_inch]:
+                if val not in candidates:
+                    candidates.append(val)
+            return candidates
+
+        # Buscar equivalencia inversa desde pulgada física o primer nominal de la familia
+        for inch_key, equiv_list in family_map.items():
+            phys_mm = PHYSICAL_INCH_TO_MM_MAP.get(inch_key)
+            # Solo expandir desde medida en pulgada física (ej. 19.05 -> [19.05, 20.0, 25.0]) o nominal primario
+            # sin colapsar milímetros métricos distintos (ej. 40 mm PVC no se confunde con 110 mm)
+            if phys_mm is not None and abs(diameter_mm - phys_mm) <= 0.15:
+                for val in equiv_list:
+                    if val not in candidates:
+                        candidates.append(val)
+            elif equiv_list and abs(diameter_mm - equiv_list[0]) <= 0.15 and phys_mm is not None and abs(equiv_list[0] - phys_mm) <= 0.15:
+                for val in equiv_list:
+                    if val not in candidates:
+                        candidates.append(val)
+
+        return candidates
+
+    @classmethod
     def split_conjunctions(cls, raw_text: str) -> List[str]:
-        """Divide líneas compuestas por ' y ', ' + ', saltos de línea o ';'.
-        
-        Ejemplo: '20 barra del 8 y 4 caño de 3/4' -> ['20 barra del 8', '4 caño de 3/4']
-        """
+        """Divide líneas compuestas por ' y ', ' + ', saltos de línea o ';'."""
         lines = []
         for segment in raw_text.splitlines():
             segment = segment.strip()
             if not segment:
                 continue
-            
-            # Separar por ';'
+
             parts = [p.strip() for p in re.split(r";", segment) if p.strip()]
-            
             for part in parts:
-                # Separar por ' + '
                 subparts = [sp.strip() for sp in re.split(r"\s+\+\s+", part) if sp.strip()]
                 for sp in subparts:
-                    # Separar por ' y ' cuando va seguido de un número o cantidad
-                    # ej: '20 barra del 8 y 4 caño de 3/4'
                     y_split = re.split(r"\s+y\s+(?=\d)", sp, flags=re.IGNORECASE)
                     for item in y_split:
                         item_clean = item.strip()
@@ -103,9 +210,8 @@ class UnitNormalizerService:
         """Extrae la cantidad inicial, unidad y el texto remanente."""
         clean_text = text.strip()
 
-        # 1. Detectar formato con punto de miles argentino (ej. '1.500 ladrillos' o '1.500,50 kg')
         m_thousand = re.match(
-            r"^(\d{1,3}(?:\.\d{3})+)(?:,(\d+))?\s*(barras?|bolsas?|caños?|canos?|unidades?|unids?|un|mts?|metros?|kg|kilos?|litros?|lts?|rollos?|ladrillos?)?\s*(.*)$",
+            r"^(\d{1,3}(?:\.\d{3})+)(?:,(\d+))?\s*(barras?|bolsas?|caños?|canos?|unidades?|unids?|un|mts?|metros?|m|kg|kilos?|litros?|lts?|rollos?|ladrillos?)?\b\s*(.*)$",
             clean_text,
             re.IGNORECASE,
         )
@@ -118,9 +224,8 @@ class UnitNormalizerService:
             unit_normalized = cls._normalize_unit_name(unit_raw)
             return qty, unit_normalized, rest.strip()
 
-        # 2. Formato estándar '20 barras', '4 caños', '1.5 kg', '50 bolsas'
         match = re.match(
-            r"^(\d+(?:[.,]\d+)?)\s*(barras?|bolsas?|caños?|canos?|unidades?|unids?|un|mts?|metros?|kg|kilos?|litros?|lts?|rollos?|ladrillos?)?\s*(.*)$",
+            r"^(\d+(?:[.,]\d+)?)\s*(barras?|bolsas?|caños?|canos?|unidades?|unids?|un|mts?|metros?|m|kg|kilos?|litros?|lts?|rollos?|ladrillos?)?\b\s*(.*)$",
             clean_text,
             re.IGNORECASE,
         )
@@ -136,47 +241,50 @@ class UnitNormalizerService:
 
     @classmethod
     def _normalize_unit_name(cls, unit_str: str) -> str:
-        u = strip_accents(unit_str)
+        u = strip_accents(unit_str).strip().lower()
         if "barra" in u:
             return "BARRA"
         if "bolsa" in u:
             return "BOLSA"
         if "caño" in u or "cano" in u:
             return "UN"
-        if "m" in u:
+        if u in {"m", "mt", "mts", "metro", "metros"}:
             return "M"
         if "kg" in u or "kilo" in u:
             return "KG"
-        if "litro" in u or "lt" in u:
+        if "litro" in u or u in {"lt", "lts"}:
             return "LT"
         if "rollo" in u:
             return "ROLLO"
         return "UN"
 
     @classmethod
-    def detect_fractional_inch(cls, text: str) -> Optional[Tuple[str, float]]:
-        """Detecta fracciones de pulgada y devuelve (inch_str, mm_val)."""
-        # Buscar ej: '1 1/2"', '3/4"', '3/4', '1/2'
-        # Primero buscar fracciones compuestas '1 1/2' o '2 1/2'
+    def detect_fractional_inch(
+        cls,
+        text: str,
+        material_type: Optional[str] = None,
+    ) -> Optional[Tuple[str, float]]:
+        """Detecta fracciones de pulgada y devuelve (inch_str, mm_val) según la familia del material."""
         compound_match = re.search(r"\b([1-3]\s+[1-3]/[2-8])\s*(?:\"|pulg|pulgadas?)?", text, re.IGNORECASE)
         if compound_match:
             fraction = compound_match.group(1).strip()
-            if fraction in INCH_TO_MM_MAP:
-                return fraction, INCH_TO_MM_MAP[fraction]
-        
-        # Fracciones simples '1/2', '3/4', '1/4'
+            mm_val = cls.resolve_inch_to_mm_by_family(fraction, material_type)
+            if mm_val is not None:
+                return fraction, mm_val
+
         simple_match = re.search(r"\b([1-3]/[2-8])\s*(?:\"|pulg|pulgadas?)?", text, re.IGNORECASE)
         if simple_match:
             fraction = simple_match.group(1).strip()
-            if fraction in INCH_TO_MM_MAP:
-                return fraction, INCH_TO_MM_MAP[fraction]
+            mm_val = cls.resolve_inch_to_mm_by_family(fraction, material_type)
+            if mm_val is not None:
+                return fraction, mm_val
 
-        # Pulgadas enteras ej: '4"', '4 pulg', '1"', '2"'
         inch_int_match = re.search(r"\b([1-4])\s*(?:\"|pulg|pulgadas?)(?:\s|$)", text, re.IGNORECASE)
         if inch_int_match:
             val_str = inch_int_match.group(1).strip()
-            if val_str in INCH_TO_MM_MAP:
-                return val_str, INCH_TO_MM_MAP[val_str]
+            mm_val = cls.resolve_inch_to_mm_by_family(val_str, material_type)
+            if mm_val is not None:
+                return val_str, mm_val
 
         return None
 
@@ -186,6 +294,7 @@ class UnitNormalizerService:
         raw_line = line.strip()
         qty, unit, remaining = cls.extract_quantity_and_unit(raw_line)
         norm_text = strip_accents(raw_line)
+        norm_remaining = strip_accents(remaining if remaining else raw_line)
 
         diameter_inch: Optional[str] = None
         diameter_mm: Optional[float] = None
@@ -194,17 +303,18 @@ class UnitNormalizerService:
         material_type: Optional[str] = None
         canonical_term = remaining if remaining else raw_line
 
-        # 1. Jerga regional de Acero / Hierros del NOA:
-        # 'hierro del 8', 'barra del 8', 'hierro de 10', 'acero del 12', 'hierro 6'
-        # Protección: excluir chapas, alambres o perfiles, y no capturar si va seguido de fracción '/2'
+        # 1. Jerga regional de Acero / Hierros del NOA
         VALID_REBAR_DIAMETERS = {4, 6, 8, 10, 12, 14, 16, 20, 25, 32}
-        if "chapa" not in norm_text and "perfil" not in norm_text and "alambre" not in norm_text:
-            re_hierro = re.search(r"\b(?:hierro|barra|acero)\s+(?:del?|de)?\s*(\d+)(?!\s*/\s*\d)\b", norm_text)
+        if not any(w in norm_text for w in ("chapa", "perfil", "alambre", "cano", "caño", "tubo", "codo", "tee", "cupla")):
+            re_hierro = re.search(
+                r'\b(?:hierros?|barras?|acero)\s+(?:del?|de)?\s*(\d+)(?!\s*(?:/\s*\d|"|pulg))\b',
+                norm_text,
+            )
             if re_hierro:
                 diam_val = float(re_hierro.group(1))
                 if int(diam_val) in VALID_REBAR_DIAMETERS:
                     diameter_mm = diam_val
-                    length_m = 12.0  # Longitud estándar de barras de acero aletado
+                    length_m = 12.0 if unit != "M" else None
                     material_type = "Acero"
                     canonical_term = f"Barra acero aletado Ø {int(diam_val)} mm x 12 m"
                     return NormalizedItemDraft(
@@ -212,7 +322,7 @@ class UnitNormalizerService:
                         raw_line=raw_line,
                         requested_term=canonical_term,
                         quantity=qty,
-                        requested_unit="BARRA" if unit == "BARRA" else "UN",
+                        requested_unit="M" if unit == "M" else ("BARRA" if unit == "BARRA" else "UN"),
                         diameter_mm=diameter_mm,
                         length_m=length_m,
                         weight_kg=weight_kg,
@@ -221,16 +331,15 @@ class UnitNormalizerService:
                         is_confirmed=True,
                     )
 
-        # 2. Cemento / Bolsas:
+        # 2. Cemento / Bolsas
         if "cemento" in norm_text:
             material_type = "Cemento"
-            # Buscar peso explícito ej: '25 kg', '50 kg'
-            re_peso = re.search(r"\b(\d+)\s*kg\b", norm_text)
+            re_peso = re.search(r"\b(\d+)\s*kg\b", norm_remaining)
             if re_peso:
                 weight_kg = float(re_peso.group(1))
-            else:
-                weight_kg = 50.0  # Estándar NOA 50kg por bolsa
-            
+            elif unit != "KG":
+                weight_kg = 50.0
+
             brand_hint = ""
             if "loma negra" in norm_text:
                 brand_hint = "Loma Negra"
@@ -239,52 +348,56 @@ class UnitNormalizerService:
             elif "holcim" in norm_text or "minetti" in norm_text:
                 brand_hint = "Holcim"
 
-            canonical_term = f"Cemento Portland {brand_hint} {int(weight_kg)} kg".strip()
+            req_unit = "KG" if unit == "KG" else "BOLSA"
+            w_desc = f"{int(weight_kg)} kg" if weight_kg else "50 kg"
+            canonical_term = f"Cemento Portland {brand_hint} {w_desc}".strip()
             return NormalizedItemDraft(
                 line_order=line_order,
                 raw_line=raw_line,
                 requested_term=canonical_term,
                 quantity=qty,
-                requested_unit="BOLSA",
+                requested_unit=req_unit,
                 weight_kg=weight_kg,
                 material_type=material_type,
                 completeness="complete",
                 is_confirmed=True,
             )
 
-        # 3. Detección de Material constructivo explícito:
+        # 3. Detección de Material constructivo explícito
         for key, mat_name in KNOWN_MATERIALS.items():
             if re.search(rf"\b{key}\b", norm_text):
                 material_type = mat_name
                 break
 
-        # 4. Detección de Diámetro en Milímetros explícito (ej: '40 mm', '110 mm', 'ø 10 mm'):
-        re_mm = re.search(r"(?:ø|diametro|d)?\s*(\d+(?:[.,]\d+)?)\s*mm\b", norm_text)
+        # 4. Detección de Diámetro en Milímetros explícito o en pulgadas diferenciando familia
+        re_mm = re.search(r"(?:ø|diametro|d)?\s*(\d+(?:[.,]\d+)?)\s*mm\b", norm_remaining)
         if re_mm:
             diameter_mm = float(re_mm.group(1).replace(",", "."))
         else:
-            # Buscar si se especificó en pulgadas fraccionarias
-            inch_res = cls.detect_fractional_inch(raw_line)
+            inch_res = cls.detect_fractional_inch(remaining if remaining else raw_line, material_type=material_type)
             if inch_res:
                 diameter_inch, diameter_mm = inch_res
 
-        # 5. Detección de Longitud comercial en metros:
-        re_len = re.search(r"\b(\d+(?:[.,]\d+)?)\s*(?:m|mts|metros)\b", norm_text)
+        # 5. Detección de Longitud comercial en metros (buscada solo en el remanente para no confundir con qty en metros)
+        re_len = re.search(r"(?:\bx\b\s*)?(\d+(?:[.,]\d+)?)\s*(?:m|mts|metros)\b", norm_remaining)
         if re_len:
             length_m = float(re_len.group(1).replace(",", "."))
-        elif ("caño" in norm_text or "cano" in norm_text) and material_type == "PVC":
-            length_m = 4.0  # Caños sanitarios estándar de 4 metros
+        elif ("caño" in norm_text or "cano" in norm_text) and material_type == "PVC" and unit != "M":
+            length_m = 4.0
 
-        # 6. Detección de familias críticas que exigen material y diámetro (caño, tubo, codo, tee, cupla, union):
+        # 6. Detección de familias críticas que exigen material y diámetro
         is_critical_family = any(fam in norm_text for fam in MATERIAL_FAMILIES)
-        
         if is_critical_family:
             missing_material = not material_type
             missing_dimension = diameter_mm is None
 
             if missing_material or missing_dimension:
-                dim_desc = f"Ø {diameter_inch}\" ({diameter_mm} mm)" if diameter_inch and diameter_mm else (f"Ø {diameter_mm} mm" if diameter_mm else "")
-                
+                dim_desc = (
+                    f"Ø {diameter_inch}\" ({diameter_mm} mm)"
+                    if diameter_inch and diameter_mm
+                    else (f"Ø {diameter_mm} mm" if diameter_mm else "")
+                )
+
                 if missing_material and missing_dimension:
                     clarification_prompt = (
                         "Especificar diámetro y material del caño/accesorio: "
@@ -335,8 +448,7 @@ class UnitNormalizerService:
 
     @classmethod
     def parse_and_normalize_line(cls, raw_input: str) -> List[NormalizedItemDraft]:
-        """Procesa una entrada completa (multilínea o compuesta por conjunciones)
-        y retorna una lista ordenada de NormalizedItemDraft."""
+        """Procesa una entrada completa (multilínea o compuesta por conjunciones)."""
         segments = cls.split_conjunctions(raw_input)
         results: List[NormalizedItemDraft] = []
         for idx, segment in enumerate(segments, start=1):

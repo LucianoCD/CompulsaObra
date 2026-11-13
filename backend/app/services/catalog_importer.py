@@ -7,9 +7,9 @@ import uuid
 import re
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 import openpyxl
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.vendor import Vendor, PriceList, VendorProduct
@@ -193,7 +193,7 @@ class CatalogImporterService:
         # Buscar versión activa previa del mismo comercio
         prev_price_list = db.scalar(
             select(PriceList)
-            .where(PriceList.vendor_id == vendor_id, PriceList.is_active == True)
+            .where(PriceList.vendor_id == vendor_id, PriceList.is_active.is_(True))
             .order_by(PriceList.version_number.desc())
         )
 
@@ -231,7 +231,7 @@ class CatalogImporterService:
         unchanged_count = 0
         new_or_updated_count = 0
         skipped_invalid_count = 0
-        seen_hashes_in_batch: Set[str] = set()
+        seen_hashes_in_batch: set[str] = set()
 
         for idx, row in enumerate(raw_rows, start=1):
             raw_sku = str(row.get(sku_col, f"SKU-{idx}") or f"SKU-{idx}").strip()

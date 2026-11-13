@@ -1,6 +1,5 @@
 """Pruebas unitarias para el normalizador físico determinista (TASK-02 y E2E-01)."""
 
-import pytest
 from app.services.unit_normalizer import UnitNormalizerService, INCH_TO_MM_MAP
 
 

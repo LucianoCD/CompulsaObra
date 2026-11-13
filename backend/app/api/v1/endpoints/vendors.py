@@ -3,7 +3,7 @@
 import uuid
 import json
 from decimal import Decimal
-from typing import List, Optional
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import select, or_
@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.config import settings
+from app.core.security import read_upload_file_bounded
 from app.models.workspace import Workspace
 from app.models.vendor import Vendor, PriceList, VendorProduct
 from app.schemas.vendor import (
@@ -34,7 +35,7 @@ def list_vendors(
     """Lista los comercios asociados al workspace y los del directorio público."""
     vendors = db.scalars(
         select(Vendor)
-        .where(or_(Vendor.workspace_id == current_ws.id, Vendor.is_public_directory == True))
+        .where(or_(Vendor.workspace_id == current_ws.id, Vendor.is_public_directory.is_(True)))
         .order_by(Vendor.created_at.asc())
     ).all()
 
@@ -108,7 +109,7 @@ def get_vendor_detail(
     vendor = db.scalar(
         select(Vendor).where(
             Vendor.id == vendor_id,
-            or_(Vendor.workspace_id == current_ws.id, Vendor.is_public_directory == True),
+            or_(Vendor.workspace_id == current_ws.id, Vendor.is_public_directory.is_(True)),
         )
     )
     if not vendor:
@@ -138,14 +139,14 @@ def get_vendor_active_products(
     vendor = db.scalar(
         select(Vendor).where(
             Vendor.id == vendor_id,
-            or_(Vendor.workspace_id == current_ws.id, Vendor.is_public_directory == True),
+            or_(Vendor.workspace_id == current_ws.id, Vendor.is_public_directory.is_(True)),
         )
     )
     if not vendor:
         raise HTTPException(status_code=404, detail="Comercio no encontrado")
 
     active_pl = db.scalar(
-        select(PriceList).where(PriceList.vendor_id == vendor.id, PriceList.is_active == True)
+        select(PriceList).where(PriceList.vendor_id == vendor.id, PriceList.is_active.is_(True))
     )
     if not active_pl:
         return []
@@ -186,16 +187,9 @@ async def import_vendor_catalog(
     db: Session = Depends(get_db),
 ):
     """Importa una lista de precios .xlsx o .csv con deduplicación incremental SHA-256."""
-    file_bytes = await file.read()
+    file_bytes = await read_upload_file_bounded(file, settings.MAX_UPLOAD_SIZE_BYTES)
     if not file_bytes:
         raise HTTPException(status_code=400, detail="El archivo enviado está vacío")
-
-    if len(file_bytes) > settings.MAX_UPLOAD_SIZE_BYTES:
-        max_mb = settings.MAX_UPLOAD_SIZE_BYTES // (1024 * 1024)
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"La planilla excede el tamaño máximo permitido de {max_mb} MB.",
-        )
 
     vendor = db.scalar(select(Vendor).where(Vendor.id == vendor_id))
     if not vendor:

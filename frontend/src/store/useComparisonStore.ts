@@ -1,16 +1,21 @@
 /**
- * Store global Zustand para Compulsa Multi-Negocio, Split Cart y Snapshot.
+ * Store global Zustand para Compulsa Multi-Negocio, Split Cart, Acopio y Snapshot (H-02, H-08, H-14, H-15).
  */
 
 import { create } from 'zustand';
 import {
-  VendorResponse,
-  PaymentModality,
+  BudgetStrategy,
   ComparisonMatrixResponse,
+  LockBudgetRequest,
   LockBudgetResponse,
   ManualVendorMatchOverride,
+  PaymentModality,
+  VendorResponse,
 } from '../types/api';
 import { apiClient } from '../services/apiClient';
+
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let latestRunSeq = 0;
 
 interface ComparisonState {
   vendors: VendorResponse[];
@@ -18,6 +23,8 @@ interface ComparisonState {
   paymentModality: PaymentModality;
   markupPct: number;
   includeDeliveryFees: boolean;
+  budgetStrategy: BudgetStrategy;
+  selectedSingleVendorId: string | null;
   currentMatrix: ComparisonMatrixResponse | null;
   lockedBudget: LockBudgetResponse | null;
   isLoading: boolean;
@@ -28,15 +35,30 @@ interface ComparisonState {
   setPaymentModality: (modality: PaymentModality) => void;
   setMarkupPct: (markup: number) => void;
   setIncludeDeliveryFees: (include: boolean) => void;
+  setBudgetStrategy: (strategy: BudgetStrategy) => void;
+  setSelectedSingleVendorId: (vendorId: string | null) => void;
   runComparison: (reqId: string) => Promise<void>;
   applyMatrixOverride: (
     runId: string,
     matchId: string,
     payload: ManualVendorMatchOverride
   ) => Promise<void>;
-  lockBudget: () => Promise<void>;
+  lockBudget: (payload?: LockBudgetRequest) => Promise<void>;
   resetComparison: () => void;
 }
+
+const scheduleDebouncedRerun = (get: () => ComparisonState) => {
+  const matrix = get().currentMatrix;
+  if (!matrix || get().lockedBudget) return;
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+  }
+  debounceTimer = setTimeout(() => {
+    void get().runComparison(matrix.requisition_id).catch(() => {
+      // El estado de error ya fue persistido en el store
+    });
+  }, 250);
+};
 
 export const useComparisonStore = create<ComparisonState>((set, get) => ({
   vendors: [],
@@ -44,6 +66,8 @@ export const useComparisonStore = create<ComparisonState>((set, get) => ({
   paymentModality: 'CASH',
   markupPct: 0.0,
   includeDeliveryFees: true,
+  budgetStrategy: 'SPLIT_CART',
+  selectedSingleVendorId: null,
   currentMatrix: null,
   lockedBudget: null,
   isLoading: false,
@@ -64,6 +88,7 @@ export const useComparisonStore = create<ComparisonState>((set, get) => ({
         isLoading: false,
         error: err instanceof Error ? err.message : 'Error al cargar comercios',
       });
+      throw err;
     }
   },
 
@@ -80,43 +105,59 @@ export const useComparisonStore = create<ComparisonState>((set, get) => ({
       next = [...current, vendorId];
     }
     set({ selectedVendorIds: next });
-
-    const matrix = get().currentMatrix;
-    if (matrix && !get().lockedBudget) {
-      get().runComparison(matrix.requisition_id);
-    }
+    scheduleDebouncedRerun(get);
   },
 
   setPaymentModality: (paymentModality: PaymentModality) => {
     set({ paymentModality });
-    const matrix = get().currentMatrix;
-    if (matrix && !get().lockedBudget) {
-      get().runComparison(matrix.requisition_id);
-    }
+    scheduleDebouncedRerun(get);
   },
 
   setMarkupPct: (markupPct: number) => {
     set({ markupPct });
-    const matrix = get().currentMatrix;
-    if (matrix && !get().lockedBudget) {
-      get().runComparison(matrix.requisition_id);
-    }
+    scheduleDebouncedRerun(get);
   },
 
   setIncludeDeliveryFees: (includeDeliveryFees: boolean) => {
     set({ includeDeliveryFees });
-    const matrix = get().currentMatrix;
-    if (matrix && !get().lockedBudget) {
-      get().runComparison(matrix.requisition_id);
-    }
+    scheduleDebouncedRerun(get);
+  },
+
+  setBudgetStrategy: (budgetStrategy: BudgetStrategy) => {
+    set({ budgetStrategy });
+    scheduleDebouncedRerun(get);
+  },
+
+  setSelectedSingleVendorId: (selectedSingleVendorId: string | null) => {
+    set({ selectedSingleVendorId });
+    scheduleDebouncedRerun(get);
   },
 
   runComparison: async (reqId: string) => {
-    const { selectedVendorIds, paymentModality, markupPct, includeDeliveryFees } = get();
-    if (selectedVendorIds.length === 0) {
-      set({ error: 'Debe seleccionar al menos un comercio para comparar' });
-      return;
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
     }
+    const {
+      selectedVendorIds,
+      paymentModality,
+      markupPct,
+      includeDeliveryFees,
+      budgetStrategy,
+      selectedSingleVendorId,
+      currentMatrix,
+    } = get();
+    if (selectedVendorIds.length === 0) {
+      const msg = 'Debe seleccionar al menos un comercio para comparar';
+      set({ error: msg });
+      throw new Error(msg);
+    }
+
+    const requestSeq = ++latestRunSeq;
+    const reuseRunId =
+      currentMatrix && currentMatrix.requisition_id === reqId && currentMatrix.status !== 'LOCKED_BUDGET'
+        ? currentMatrix.run_id
+        : undefined;
 
     try {
       set({ isLoading: true, error: null });
@@ -125,13 +166,24 @@ export const useComparisonStore = create<ComparisonState>((set, get) => ({
         payment_modality: paymentModality,
         markup_pct: markupPct,
         include_delivery_fees: includeDeliveryFees,
+        budget_strategy: budgetStrategy,
+        selected_single_vendor_id:
+          budgetStrategy === 'SINGLE_VENDOR' ? selectedSingleVendorId : null,
+        existing_run_id: reuseRunId ?? null,
+        persist: true,
       });
+      if (requestSeq !== latestRunSeq) {
+        return;
+      }
       set({ currentMatrix: matrix, isLoading: false });
     } catch (err: unknown) {
-      set({
-        isLoading: false,
-        error: err instanceof Error ? err.message : 'Error al ejecutar compulsa',
-      });
+      if (requestSeq === latestRunSeq) {
+        set({
+          isLoading: false,
+          error: err instanceof Error ? err.message : 'Error al ejecutar compulsa',
+        });
+      }
+      throw err;
     }
   },
 
@@ -149,23 +201,52 @@ export const useComparisonStore = create<ComparisonState>((set, get) => ({
     }
   },
 
-  lockBudget: async () => {
+  lockBudget: async (payload?: LockBudgetRequest) => {
     const matrix = get().currentMatrix;
-    if (!matrix) return;
+    if (!matrix) {
+      const msg = 'No hay una compulsa activa para congelar';
+      set({ error: msg });
+      throw new Error(msg);
+    }
 
     try {
       set({ isLoading: true, error: null });
-      const lockRes = await apiClient.lockBudget(matrix.run_id);
-      set({ lockedBudget: lockRes, isLoading: false });
+      const effectivePayload: LockBudgetRequest = {
+        accept_partial: payload?.accept_partial ?? false,
+        strategy: payload?.strategy ?? get().budgetStrategy,
+        selected_single_vendor_id:
+          payload?.selected_single_vendor_id ??
+          (get().budgetStrategy === 'SINGLE_VENDOR'
+            ? get().selectedSingleVendorId ?? matrix.best_single_vendor_id ?? null
+            : null),
+      };
+      const lockRes = await apiClient.lockBudget(matrix.run_id, effectivePayload);
+      set({
+        lockedBudget: lockRes,
+        currentMatrix: { ...matrix, status: 'LOCKED_BUDGET' },
+        isLoading: false,
+      });
     } catch (err: unknown) {
       set({
         isLoading: false,
         error: err instanceof Error ? err.message : 'Error al congelar presupuesto',
       });
+      throw err;
     }
   },
 
   resetComparison: () => {
-    set({ currentMatrix: null, lockedBudget: null, error: null });
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    latestRunSeq++;
+    set({
+      currentMatrix: null,
+      lockedBudget: null,
+      budgetStrategy: 'SPLIT_CART',
+      selectedSingleVendorId: null,
+      error: null,
+    });
   },
 }));

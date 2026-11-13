@@ -24,12 +24,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-          pip install xlrd>=2.0.1
+
+      - name: Lint Backend (Ruff)
+        working-directory: backend
+        run: |
+          python -m ruff check .
 
       - name: Run Backend Pytest (E2E-01 to E2E-05 & Audit Regressions)
         working-directory: backend
         run: |
-          pytest -v
+          python -m pytest -v
 
   frontend-verify:
     name: Frontend Strict TypeScript & Vite Build

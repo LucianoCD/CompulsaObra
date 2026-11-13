@@ -2,11 +2,16 @@
 
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.comparison import ComparisonRun
+    from app.models.requisition import Requisition
+    from app.models.vendor import ProductAlias, Vendor
 
 
 class Workspace(Base):
@@ -64,6 +69,18 @@ class User(Base):
         sa.CheckConstraint("role IN ('BUYER', 'ESTIMATOR', 'ADMIN')", name="chk_user_role"),
         nullable=False,
         default="ESTIMATOR",
+    )
+    email_verified: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False
+    )
+    verification_token: Mapped[Optional[str]] = mapped_column(
+        sa.String(128), nullable=True
+    )
+    failed_login_attempts: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0
+    )
+    locked_until: Mapped[Optional[datetime]] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True),

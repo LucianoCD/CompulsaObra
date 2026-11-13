@@ -2,7 +2,6 @@
 
 import uuid
 import hashlib
-from datetime import datetime, timezone
 from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,7 +13,7 @@ from app.core.security import get_password_hash
 
 def seed_demo_data_if_needed(db: Session) -> Workspace:
     """Crea el Workspace Demo y los 3 comercios semilla de Jujuy de manera idempotente."""
-    demo_ws = db.scalar(select(Workspace).where(Workspace.is_demo == True))
+    demo_ws = db.scalar(select(Workspace).where(Workspace.is_demo.is_(True)))
     if demo_ws:
         return demo_ws
 

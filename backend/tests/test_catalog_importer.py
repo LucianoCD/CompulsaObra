@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
 from app.models.workspace import Workspace
-from app.models.vendor import Vendor, PriceList, VendorProduct
+from app.models.vendor import Vendor, PriceList
 from app.schemas.vendor import ColumnMappingSchema
 from app.services.catalog_importer import (
     CatalogImporterService,

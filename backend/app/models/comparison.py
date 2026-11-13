@@ -2,13 +2,18 @@
 
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any
+from typing import TYPE_CHECKING, List, Optional, Dict, Any
 from decimal import Decimal
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects import postgresql
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.requisition import Requisition, RequisitionItem
+    from app.models.vendor import Vendor, VendorProduct
+    from app.models.workspace import Workspace
 
 JSON_TYPE = postgresql.JSONB().with_variant(sa.JSON(), "sqlite")
 

@@ -2,7 +2,7 @@
 name = "compulsa-obra-backend"
 version = "0.1.0"
 description = "Backend REST API para CompulsaObra: Presupuestos y Comparación Multi-Negocio de Materiales de Construcción"
-readme = "../README.md"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
@@ -33,6 +33,10 @@ dev = [
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
@@ -42,3 +46,7 @@ pythonpath = ["."]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = ["E501"]

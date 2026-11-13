@@ -3,14 +3,15 @@
 import uuid
 from typing import List, Optional
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status, Body
-from sqlalchemy import select, and_
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
 from app.core.config import settings
+from app.core.security import read_upload_file_bounded
 from app.models.workspace import Workspace
-from app.models.vendor import ProductAlias
+from app.models.vendor import ProductAlias, Vendor, VendorProduct, PriceList
 from app.models.requisition import Requisition, RequisitionItem
 from app.schemas.dimensions import NormalizedItemDraft
 from app.schemas.requisition import (
@@ -22,7 +23,6 @@ from app.schemas.requisition import (
 from app.api.deps import get_current_workspace
 from app.services.multimodal_extractor import MultimodalExtractorService
 from app.services.unit_normalizer import normalize_material_label, MATERIAL_FAMILIES, strip_accents
-from app.core.exceptions import WorkspaceIsolationError
 
 router = APIRouter(prefix="/requisitions", tags=["Requisiciones y Desambiguación"])
 extractor = MultimodalExtractorService()
@@ -139,13 +139,7 @@ async def ingest_requisition(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Formato de imagen inválido. Solo se admiten archivos de imagen (JPEG, PNG, WebP).",
             )
-        image_bytes = await image_file.read()
-        if len(image_bytes) > settings.MAX_UPLOAD_SIZE_BYTES:
-            max_mb = settings.MAX_UPLOAD_SIZE_BYTES // (1024 * 1024)
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"La imagen excede el límite máximo permitido de {max_mb} MB.",
-            )
+        image_bytes = await read_upload_file_bounded(image_file, settings.MAX_UPLOAD_SIZE_BYTES)
         mime_type = content_type
         source_type = "IMAGE"
     elif preset_id:
@@ -322,11 +316,39 @@ def resolve_item_ambiguity(
     item.is_confirmed = True
     item.clarification_prompt = None
 
-    # Si solicitó guardar como alias supervisado en el workspace (Upsert seguro BUG-01/BUG-02)
+    # Si solicitó guardar como alias supervisado en el workspace (H-11: vincula producto real si existe y guarda canonical_term)
     if payload.save_as_alias:
         alias_term = item.requested_term.strip()
         raw_term = item.raw_line.strip()
-        for term_to_save in set([alias_term, raw_term]):
+        target_prod_id: Optional[uuid.UUID] = None
+
+        # Buscar producto compatible en el comercio especificado (o catálogo accesible) para enlazar target_vendor_product_id
+        from sqlalchemy import or_ as sql_or
+        vp_stmt = (
+            select(VendorProduct)
+            .join(PriceList, VendorProduct.price_list_id == PriceList.id)
+            .join(Vendor, VendorProduct.vendor_id == Vendor.id)
+            .where(
+                PriceList.is_active.is_(True),
+                sql_or(Vendor.workspace_id == current_ws.id, Vendor.is_public_directory.is_(True)),
+            )
+        )
+        if payload.vendor_id:
+            vp_stmt = vp_stmt.where(VendorProduct.vendor_id == payload.vendor_id)
+        if item.diameter_mm is not None:
+            vp_stmt = vp_stmt.where(VendorProduct.diameter_mm.is_not(None))
+            from sqlalchemy import func as sql_func
+            vp_stmt = vp_stmt.where(sql_func.abs(VendorProduct.diameter_mm - item.diameter_mm) <= Decimal("0.5"))
+        if item.material_type:
+            mat_clean = strip_accents(item.material_type).lower()
+            vp_stmt = vp_stmt.where(
+                sql_func.lower(sql_func.coalesce(VendorProduct.material_type, VendorProduct.normalized_description)).contains(mat_clean)
+            )
+        matching_vps = db.scalars(vp_stmt).all()
+        if len(matching_vps) == 1:
+            target_prod_id = matching_vps[0].id
+
+        for term_to_save in {alias_term, raw_term}:
             existing_alias = db.scalar(
                 select(ProductAlias).where(
                     ProductAlias.workspace_id == current_ws.id,
@@ -336,6 +358,8 @@ def resolve_item_ambiguity(
             )
             if existing_alias:
                 existing_alias.canonical_term = item.requested_term
+                if target_prod_id is not None:
+                    existing_alias.target_vendor_product_id = target_prod_id
                 existing_alias.is_active = True
             else:
                 db.add(
@@ -345,6 +369,7 @@ def resolve_item_ambiguity(
                         vendor_id=payload.vendor_id,
                         alias_term=term_to_save,
                         canonical_term=item.requested_term,
+                        target_vendor_product_id=target_prod_id,
                         is_active=True,
                     )
                 )

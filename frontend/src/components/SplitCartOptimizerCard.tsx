@@ -12,8 +12,10 @@ import {
   Copy,
   ShieldCheck,
   TrendingDown,
+  AlertTriangle,
+  Loader2,
 } from 'lucide-react';
-import { PaymentModality } from '../types/api';
+import { BudgetStrategy, PaymentModality } from '../types/api';
 
 interface SplitCartOptimizerCardProps {
   onLockBudget: () => void;
@@ -26,15 +28,24 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
     lockedBudget,
     lockBudget,
     isLoading,
+    error,
     paymentModality,
     includeDeliveryFees,
     markupPct,
+    budgetStrategy,
+    selectedSingleVendorId,
     setPaymentModality,
     setIncludeDeliveryFees,
     setMarkupPct,
+    setBudgetStrategy,
+    setSelectedSingleVendorId,
   } = useComparisonStore();
 
   const [copiedLink, setCopiedLink] = useState(false);
+  const [acceptPartial, setAcceptPartial] = useState(false);
+  const [downloadingMode, setDownloadingMode] = useState<'comparison' | 'client_budget' | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [lockError, setLockError] = useState<string | null>(null);
 
   if (!currentMatrix) {
     return (
@@ -97,11 +108,40 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
 
   const split = currentMatrix.split_cart;
   const isRecommended = split.is_split_recommended;
-  const isLocked = !!lockedBudget;
+  const isLocked = !!lockedBudget || currentMatrix.status === 'LOCKED_BUDGET';
+  const fulfillmentStatus = currentMatrix.fulfillment_status ?? 'complete';
+  const effectiveSingleVendorId = selectedSingleVendorId || currentMatrix.best_single_vendor_id || null;
 
   const handleLock = async () => {
-    await lockBudget();
-    onLockBudget();
+    setLockError(null);
+    try {
+      await lockBudget({
+        accept_partial: fulfillmentStatus === 'partial' ? acceptPartial : false,
+        strategy: budgetStrategy,
+        selected_single_vendor_id:
+          budgetStrategy === 'SINGLE_VENDOR' ? effectiveSingleVendorId : null,
+      });
+      onLockBudget();
+    } catch (err: unknown) {
+      setLockError(err instanceof Error ? err.message : 'No se pudo congelar el presupuesto.');
+    }
+  };
+
+  const handleDownloadPdf = async (mode: 'comparison' | 'client_budget') => {
+    setDownloadError(null);
+    setDownloadingMode(mode);
+    try {
+      await apiClient.triggerPdfDownload(
+        currentMatrix.run_id,
+        mode,
+        budgetStrategy,
+        budgetStrategy === 'SINGLE_VENDOR' ? effectiveSingleVendorId : null
+      );
+    } catch (err: unknown) {
+      setDownloadError(err instanceof Error ? err.message : 'Error al descargar el PDF.');
+    } finally {
+      setDownloadingMode(null);
+    }
   };
 
   const handleCopyShareLink = () => {
@@ -241,25 +281,49 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
         )}
       </div>
 
-      {/* Tarjeta de Decisión: Proveedor Único vs Carrito Dividido */}
+      {/* Tarjeta de Decisión: Proveedor Único vs Carrito Dividido (H-02) */}
       <div className="space-y-3 font-mono">
+        <div className="flex items-center justify-between text-[10px] font-sans font-semibold uppercase tracking-wider text-content-secondary">
+          <span>Estrategia Activa para Emisión / PDF:</span>
+          <span className="font-mono text-action-primary">
+            {budgetStrategy === 'SINGLE_VENDOR' ? 'Proveedor Único' : 'Split Cart'}
+          </span>
+        </div>
+
         {/* Opción A: Proveedor Único */}
-        <div
-          className={`p-3.5 rounded-control border transition ${
-            !isRecommended
-              ? 'bg-semantic-winnerBg/40 border-emerald-600/50 shadow-xs'
-              : 'bg-surface-subtle border-surface-hairline'
+        <button
+          type="button"
+          disabled={isLocked}
+          onClick={() => {
+            setBudgetStrategy('SINGLE_VENDOR');
+            if (!selectedSingleVendorId && currentMatrix.best_single_vendor_id) {
+              setSelectedSingleVendorId(currentMatrix.best_single_vendor_id);
+            }
+          }}
+          className={`w-full text-left p-3.5 rounded-control border transition ${
+            budgetStrategy === 'SINGLE_VENDOR'
+              ? 'bg-semantic-winnerBg/70 border-emerald-600 ring-1 ring-emerald-600/40 shadow-sm'
+              : !isRecommended
+                ? 'bg-semantic-winnerBg/40 border-emerald-600/50 shadow-xs'
+                : 'bg-surface-subtle border-surface-hairline hover:border-surface-strong'
           }`}
         >
           <div className="flex items-center justify-between mb-1">
             <span className="text-[10px] uppercase font-bold text-content-muted font-sans tracking-wide">
               Estrategia A · Compra Unificada
             </span>
-            {!isRecommended && (
-              <span className="text-[9px] font-sans font-bold uppercase px-1.5 py-0.2 rounded bg-semantic-winnerBg text-semantic-winnerText border border-surface-hairline">
-                Recomendada
-              </span>
-            )}
+            <div className="flex items-center gap-1">
+              {budgetStrategy === 'SINGLE_VENDOR' && (
+                <span className="text-[9px] font-sans font-extrabold uppercase px-1.5 py-0.2 rounded bg-action-primary text-white">
+                  Activa
+                </span>
+              )}
+              {!isRecommended && (
+                <span className="text-[9px] font-sans font-bold uppercase px-1.5 py-0.2 rounded bg-semantic-winnerBg text-semantic-winnerText border border-surface-hairline">
+                  Recomendada
+                </span>
+              )}
+            </div>
           </div>
           <div className="font-sans font-bold text-xs text-content-primary truncate">{bestSingle.name}</div>
           <div className="text-[11px] text-content-secondary mt-0.5 font-sans">
@@ -271,25 +335,35 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
               $ {bestSingle.total.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
             </span>
           </div>
-        </div>
+        </button>
 
         {/* Opción B: Carrito Dividido Óptimo (Split Cart) */}
-        <div
-          className={`p-3.5 rounded-control border transition ${
-            isRecommended
-              ? 'bg-semantic-winnerBg/70 border-emerald-600 shadow-sm'
-              : 'bg-surface-subtle border-surface-hairline'
+        <button
+          type="button"
+          disabled={isLocked}
+          onClick={() => setBudgetStrategy('SPLIT_CART' as BudgetStrategy)}
+          className={`w-full text-left p-3.5 rounded-control border transition ${
+            budgetStrategy === 'SPLIT_CART'
+              ? 'bg-semantic-winnerBg/70 border-emerald-600 ring-1 ring-emerald-600/40 shadow-sm'
+              : 'bg-surface-subtle border-surface-hairline hover:border-surface-strong'
           }`}
         >
           <div className="flex items-center justify-between mb-1">
             <span className="text-[10px] uppercase font-bold text-content-muted font-sans tracking-wide">
               Estrategia B · Split Cart Óptimo
             </span>
-            {isRecommended && (
-              <span className="text-[9px] font-sans font-extrabold uppercase px-1.5 py-0.2 rounded bg-action-primary text-white">
-                Mayor Ahorro Neto
-              </span>
-            )}
+            <div className="flex items-center gap-1">
+              {budgetStrategy === 'SPLIT_CART' && (
+                <span className="text-[9px] font-sans font-extrabold uppercase px-1.5 py-0.2 rounded bg-action-primary text-white">
+                  Activa
+                </span>
+              )}
+              {isRecommended && (
+                <span className="text-[9px] font-sans font-extrabold uppercase px-1.5 py-0.2 rounded bg-semantic-winnerBg text-semantic-winnerText border border-surface-hairline">
+                  Mayor Ahorro Neto
+                </span>
+              )}
+            </div>
           </div>
           <div className="font-sans font-bold text-xs text-content-primary">
             {split.participating_vendors_count} Corralones Seleccionados
@@ -329,17 +403,61 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
               </span>
             </div>
           )}
-        </div>
+        </button>
       </div>
 
-      {/* Acciones de Cierre, Congelamiento e Inmutabilidad */}
+      {/* Guardia de Completitud y Acciones de Cierre (H-05, H-08) */}
       <div className="pt-2 border-t border-surface-hairline space-y-2.5">
+        {fulfillmentStatus !== 'complete' && !isLocked && (
+          <div
+            role="status"
+            className="p-2.5 rounded-control bg-semantic-hitlBg border border-semantic-hitlBorder text-[11px] text-content-primary space-y-1.5"
+          >
+            <div className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-300">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              <span>
+                {fulfillmentStatus === 'pending'
+                  ? `Compulsa Pendiente (${currentMatrix.ambiguous_items_count} ambigüedades sin resolver)`
+                  : `Presupuesto Parcial (${currentMatrix.unresolved_items_count} renglón/es sin cobertura)`}
+              </span>
+            </div>
+            {fulfillmentStatus === 'pending' ? (
+              <p className="text-content-secondary leading-tight">
+                Resuelve los ítems ambiguos en la matriz antes de congelar el presupuesto definitivo.
+              </p>
+            ) : (
+              <label className="flex items-start gap-2 cursor-pointer select-none text-content-primary">
+                <input
+                  type="checkbox"
+                  checked={acceptPartial}
+                  onChange={(e) => setAcceptPartial(e.target.checked)}
+                  className="mt-0.5 rounded-control border-surface-strong text-action-primary focus:ring-action-focus w-4 h-4"
+                />
+                <span>Confirmo emitir y congelar presupuesto parcial excluyendo renglones sin cobertura.</span>
+              </label>
+            )}
+          </div>
+        )}
+
+        {(lockError || downloadError || error) && (
+          <div
+            role="alert"
+            className="p-2 rounded-control bg-semantic-dangerBg border border-red-400/50 text-semantic-dangerText text-[11px] font-medium"
+          >
+            {lockError || downloadError || error}
+          </div>
+        )}
+
         {!isLocked ? (
           <button
             onClick={handleLock}
-            disabled={isLoading}
+            disabled={
+              isLoading ||
+              fulfillmentStatus === 'pending' ||
+              (fulfillmentStatus === 'partial' && !acceptPartial)
+            }
             type="button"
-            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-control bg-action-primary hover:bg-action-hover text-white font-bold text-xs shadow-sm transition min-h-[42px]"
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs shadow-sm transition min-h-[42px]"
           >
             <Lock className="w-3.5 h-3.5" />
             <span>Congelar Presupuesto Definitivo (Lock-Budget)</span>
@@ -352,29 +470,37 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
                 <span>Snapshot Inmutable HMAC-SHA256 Verificado</span>
               </div>
               <p className="font-sans leading-tight">
-                El pliego ha quedado congelado contra mutaciones. Puedes descargar los documentos y compartir el enlace público.
+                El pliego ha quedado congelado contra mutaciones. Descarga los documentos autenticados o comparte el enlace público.
               </p>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
-              <a
-                href={apiClient.getPdfUrl(currentMatrix.run_id, 'comparison')}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-control bg-surface-subtle hover:bg-surface-elevated border border-surface-hairline text-content-primary text-xs font-semibold transition"
+              <button
+                type="button"
+                disabled={downloadingMode !== null}
+                onClick={() => handleDownloadPdf('comparison')}
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-control bg-surface-subtle hover:bg-surface-elevated disabled:opacity-60 border border-surface-hairline text-content-primary text-xs font-semibold transition"
               >
-                <Download className="w-3.5 h-3.5 text-action-primary" />
+                {downloadingMode === 'comparison' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-action-primary" />
+                ) : (
+                  <Download className="w-3.5 h-3.5 text-action-primary" />
+                )}
                 <span>PDF Comparativa</span>
-              </a>
-              <a
-                href={apiClient.getPdfUrl(currentMatrix.run_id, 'client_budget')}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-control bg-action-primary hover:bg-action-hover text-white text-xs font-bold transition shadow-sm"
+              </button>
+              <button
+                type="button"
+                disabled={downloadingMode !== null}
+                onClick={() => handleDownloadPdf('client_budget')}
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-60 text-white text-xs font-bold transition shadow-sm"
               >
-                <FileText className="w-3.5 h-3.5" />
+                {downloadingMode === 'client_budget' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <FileText className="w-3.5 h-3.5" />
+                )}
                 <span>PDF Cliente</span>
-              </a>
+              </button>
             </div>
 
             <button
