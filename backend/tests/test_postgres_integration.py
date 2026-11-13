@@ -12,13 +12,14 @@ import sqlalchemy as sa
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+from app.core.config import normalize_postgres_url
 from app.core.database import get_db
 from app.core.security import AuthRateLimiter, CSRF_COOKIE_NAME, CSRF_HEADER_NAME
 from app.main import app
 from app.services.email_service import EmailService
 from app.services.seed import seed_demo_data_if_needed
 
-TEST_POSTGRES_URL = os.getenv("TEST_POSTGRES_URL", "").strip()
+TEST_POSTGRES_URL = normalize_postgres_url(os.getenv("TEST_POSTGRES_URL", ""))
 
 pytestmark = pytest.mark.skipif(
     not TEST_POSTGRES_URL,

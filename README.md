@@ -67,7 +67,7 @@ python -m ruff check .
 python -m pytest -v
 
 # 2b. Integración real PostgreSQL 16 + Alembic + Redis 7 (requiere TEST_POSTGRES_URL)
-TEST_POSTGRES_URL="postgresql://compulsa_test:StrongTestPass2026@127.0.0.1:5432/compulsa_test" \
+TEST_POSTGRES_URL="postgresql+psycopg2://compulsa_test:StrongTestPass2026@127.0.0.1:5432/compulsa_test" \
 REDIS_URL="redis://127.0.0.1:6379/0" \
 python -m pytest tests/test_postgres_integration.py -v
 

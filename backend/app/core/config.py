@@ -20,6 +20,16 @@ INSECURE_KNOWN_SECRETS = {
 INSECURE_DB_PASSWORDS = ("compulsa_pass", ":postgres@", ":password@", ":changeme@")
 
 
+def normalize_postgres_url(url: str) -> str:
+    """Fuerza el driver psycopg2 en URIs postgres/postgresql genéricas bajo SQLAlchemy 2.1+."""
+    raw = str(url).strip()
+    if raw.startswith("postgres://"):
+        return "postgresql+psycopg2://" + raw[len("postgres://") :]
+    if raw.startswith("postgresql://"):
+        return "postgresql+psycopg2://" + raw[len("postgresql://") :]
+    return raw
+
+
 class Settings(BaseSettings):
     PROJECT_NAME: str = "CompulsaObra"
     ENVIRONMENT: str = "development"
@@ -119,6 +129,11 @@ class Settings(BaseSettings):
                     "En entorno de producción debe configurarse REDIS_URL para el rate limiting compartido."
                 )
         return self
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def normalize_database_url(cls, v: str) -> str:
+        return normalize_postgres_url(v)
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
