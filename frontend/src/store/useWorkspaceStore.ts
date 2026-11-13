@@ -1,5 +1,5 @@
 /**
- * Store global Zustand para Workspace, Sesión HttpOnly/Demo y Rol activo (H-21).
+ * Store global Zustand para Workspace, Sesión basada exclusivamente en cookies HttpOnly y Rol activo (H-21, H-28, H-33).
  */
 
 import { create } from 'zustand';
@@ -11,14 +11,25 @@ interface WorkspaceState {
   workspaceName: string;
   isDemo: boolean;
   role: UserRole;
-  token: string | null;
+  email: string | null;
+  emailVerified: boolean;
+  pendingVerificationEmail: string | null;
   isLoading: boolean;
   error: string | null;
 
   initSession: () => Promise<void>;
   switchMode: (isDemo: boolean) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, fullName: string, workspaceName?: string, role?: UserRole) => Promise<void>;
+  register: (
+    email: string,
+    password: string,
+    fullName: string,
+    workspaceName?: string,
+    role?: UserRole
+  ) => Promise<SessionResponse>;
+  verifyEmail: (email: string, token: string) => Promise<SessionResponse>;
+  resendVerification: (email: string) => Promise<string>;
+  clearPendingVerification: () => void;
   logout: () => Promise<void>;
   setRole: (role: UserRole) => Promise<void>;
 }
@@ -27,14 +38,15 @@ const applySessionToClient = (
   session: SessionResponse,
   set: (partial: Partial<WorkspaceState>) => void
 ) => {
-  apiClient.setToken(session.access_token);
   apiClient.setWorkspaceId(session.workspace_id);
   set({
     workspaceId: session.workspace_id,
     workspaceName: session.workspace_name,
     isDemo: session.is_demo,
     role: session.role,
-    token: session.access_token,
+    email: session.email,
+    emailVerified: session.email_verified,
+    pendingVerificationEmail: null,
     isLoading: false,
   });
 };
@@ -44,7 +56,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaceName: 'Workspace Demo Jujuy',
   isDemo: true,
   role: 'ESTIMATOR',
-  token: null,
+  email: null,
+  emailVerified: true,
+  pendingVerificationEmail: null,
   isLoading: false,
   error: null,
 
@@ -54,15 +68,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
       try {
         const info = await apiClient.getSessionInfo();
-        apiClient.setWorkspaceId(info.workspace_id);
-        set({
-          workspaceId: info.workspace_id,
-          workspaceName: info.workspace_name,
-          isDemo: info.is_demo,
-          role: info.role,
-          token: get().token,
-          isLoading: false,
-        });
+        applySessionToClient(info, set);
         return;
       } catch {
         // Sin cookie HttpOnly activa: iniciar sesión Demo automáticamente
@@ -107,17 +113,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  register: async (email: string, password: string, fullName: string, workspaceName?: string, role?: UserRole) => {
+  register: async (
+    email: string,
+    password: string,
+    fullName: string,
+    workspaceName?: string,
+    role?: UserRole
+  ) => {
     try {
       set({ isLoading: true, error: null });
-      const session = await apiClient.register({
+      const res = await apiClient.register({
         email,
         password,
         full_name: fullName,
         workspace_name: workspaceName,
         role,
       });
-      applySessionToClient(session, set);
+      set({
+        pendingVerificationEmail: res.email,
+        isLoading: false,
+      });
+      return res;
     } catch (err: unknown) {
       set({
         isLoading: false,
@@ -127,25 +143,55 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
+  verifyEmail: async (email: string, token: string) => {
+    try {
+      set({ isLoading: true, error: null });
+      const session = await apiClient.verifyEmail({ email, token });
+      applySessionToClient(session, set);
+      return session;
+    } catch (err: unknown) {
+      set({
+        isLoading: false,
+        error: err instanceof Error ? err.message : 'Error al verificar correo',
+      });
+      throw err;
+    }
+  },
+
+  resendVerification: async (email: string) => {
+    try {
+      set({ isLoading: true, error: null });
+      const res = await apiClient.resendVerification(email);
+      set({ isLoading: false });
+      return res.message;
+    } catch (err: unknown) {
+      set({
+        isLoading: false,
+        error: err instanceof Error ? err.message : 'Error al reenviar verificación',
+      });
+      throw err;
+    }
+  },
+
+  clearPendingVerification: () => {
+    set({ pendingVerificationEmail: null, error: null });
+  },
+
   logout: async () => {
     try {
       set({ isLoading: true, error: null });
       await apiClient.logout();
     } finally {
-      apiClient.setToken(null);
       apiClient.setWorkspaceId(null);
-      set({ token: null, isLoading: false });
+      set({ isLoading: false, email: null, pendingVerificationEmail: null });
       await get().initSession();
     }
   },
 
   setRole: async (role: UserRole) => {
     try {
-      const res = await apiClient.updateRole(role);
-      if (res.access_token) {
-        apiClient.setToken(res.access_token);
-      }
-      set({ role, token: res.access_token || get().token });
+      await apiClient.updateRole(role);
+      set({ role });
     } catch (err: unknown) {
       set({
         error: err instanceof Error ? err.message : 'Error al actualizar rol',

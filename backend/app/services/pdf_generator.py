@@ -41,9 +41,10 @@ def format_ars(val: Optional[float]) -> str:
 class CompulsaPDF(FPDF):
     """Clase personalizada FPDF con encabezados y pies de página estilizados."""
 
-    def __init__(self, title_text: str = "CompulsaObra"):
+    def __init__(self, title_text: str = "CompulsaObra", is_simulation: bool = False):
         super().__init__(orientation="P", unit="mm", format="A4")
         self.title_text = clean_pdf_text(title_text)
+        self.is_simulation = is_simulation
         self.set_auto_page_break(auto=True, margin=15)
 
     def header(self):
@@ -52,10 +53,15 @@ class CompulsaPDF(FPDF):
         self.cell(0, 10, self.title_text, border=False, new_x="LMARGIN", new_y="NEXT", align="L")
         self.set_font("Helvetica", "I", 8)
         self.set_text_color(100, 116, 139)
+        subtitle = (
+            "BORRADOR DE SIMULACION (NO EMITIDO) - Valores referenciales sujetos a bloqueo definitivo | NOA"
+            if self.is_simulation
+            else "Sistema Inteligente de Elaboracion de Presupuestos y Comparacion Multi-Negocio | NOA"
+        )
         self.cell(
             0,
             5,
-            "Sistema Inteligente de Elaboracion de Presupuestos y Comparacion Multi-Negocio | NOA",
+            subtitle,
             border=False,
             new_x="LMARGIN",
             new_y="NEXT",
@@ -71,7 +77,12 @@ class CompulsaPDF(FPDF):
         self.set_font("Helvetica", "I", 8)
         self.set_text_color(148, 163, 184)
         page_str = f"Pagina {self.page_no()}/{{nb}}"
-        self.cell(0, 10, f"CompulsaObra - Documento emitido con snapshot inmutable - {page_str}", align="C")
+        footer_label = (
+            f"CompulsaObra - Borrador de simulacion (no emitido) - {page_str}"
+            if self.is_simulation
+            else f"CompulsaObra - Documento emitido con snapshot inmutable - {page_str}"
+        )
+        self.cell(0, 10, footer_label, align="C")
 
 
 class PDFGeneratorService:
@@ -86,14 +97,49 @@ class PDFGeneratorService:
         client_name: Optional[str] = None,
         strategy: Optional[str] = None,
         single_vendor_id: Optional[str] = None,
+        is_simulation: bool = False,
     ) -> bytes:
         header_title = (
             "CompulsaObra - Comparativa Multi-Negocio"
             if mode == "comparison"
             else "CompulsaObra - Presupuesto al Cliente"
         )
-        pdf = CompulsaPDF(title_text=header_title)
+        if is_simulation:
+            header_title = f"{header_title} [SIMULACION]"
+        pdf = CompulsaPDF(title_text=header_title, is_simulation=is_simulation)
         pdf.add_page()
+
+        if is_simulation:
+            pdf.set_fill_color(254, 243, 199)
+            pdf.set_text_color(146, 64, 14)
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.multi_cell(
+                0,
+                5,
+                clean_pdf_text(
+                    "SIMULACION / BORRADOR (NO EMITIDO): Este documento refleja una vista previa de trabajo. "
+                    "Para emitir un presupuesto definitivo con firma inmutable debe ejecutar 'Congelar Presupuesto'."
+                ),
+                border=1,
+                fill=True,
+                new_x="LMARGIN",
+                new_y="NEXT",
+            )
+            pdf.ln(3)
+        else:
+            pdf.set_fill_color(236, 253, 245)
+            pdf.set_text_color(6, 95, 70)
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(
+                0,
+                6,
+                clean_pdf_text("ESTADO: PRESUPUESTO DEFINITIVO EMITIDO (SNAPSHOT INMUTABLE VERIFICADO)"),
+                border=1,
+                fill=True,
+                new_x="LMARGIN",
+                new_y="NEXT",
+            )
+            pdf.ln(3)
 
         pdf.set_font("Helvetica", "B", 12)
         pdf.set_text_color(15, 23, 42)
@@ -104,12 +150,14 @@ class PDFGeneratorService:
         if client_name:
             pdf.cell(0, 6, clean_pdf_text(f"Cliente / Comitente: {client_name}"), new_x="LMARGIN", new_y="NEXT")
 
-        created_at_str = str(matrix_data.get("created_at", datetime.now().isoformat()))[:10]
+        issued_str = str(
+            matrix_data.get("locked_at") or matrix_data.get("created_at") or datetime.now().isoformat()
+        )[:10]
         payment_mod = matrix_data.get("payment_modality", "CASH")
         pdf.cell(
             0,
             6,
-            clean_pdf_text(f"Fecha de Emision: {created_at_str} | Modalidad: {payment_mod}"),
+            clean_pdf_text(f"Fecha de Emision: {issued_str} | Modalidad: {payment_mod}"),
             new_x="LMARGIN",
             new_y="NEXT",
         )
@@ -126,6 +174,7 @@ class PDFGeneratorService:
                 matrix_data,
                 strategy=strategy,
                 single_vendor_id=single_vendor_id,
+                is_simulation=is_simulation,
             )
 
         return bytes(pdf.output())
@@ -242,12 +291,17 @@ class PDFGeneratorService:
         data: Dict[str, Any],
         strategy: Optional[str] = None,
         single_vendor_id: Optional[str] = None,
+        is_simulation: bool = False,
     ):
-        resolved = ComparisonOptimizerService.resolve_budget_lines_for_strategy(
-            matrix_data=data,
-            strategy=strategy,
-            single_vendor_id=single_vendor_id,
-        )
+        frozen = data.get("frozen_budget_snapshot")
+        if not is_simulation and isinstance(frozen, dict) and strategy is None and single_vendor_id is None:
+            resolved = frozen
+        else:
+            resolved = ComparisonOptimizerService.resolve_budget_lines_for_strategy(
+                matrix_data=data,
+                strategy=strategy,
+                single_vendor_id=single_vendor_id,
+            )
         strategy_label = (
             "Compra Unificada (Proveedor Unico)"
             if resolved["strategy"] == "SINGLE_VENDOR"

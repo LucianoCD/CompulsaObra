@@ -68,6 +68,21 @@ class ComparisonRun(Base):
     public_share_token: Mapped[str] = mapped_column(
         sa.String(128), unique=True, nullable=False, index=True
     )
+    is_locked: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, index=True
+    )
+    locked_at: Mapped[Optional[datetime]] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    locked_strategy: Mapped[Optional[str]] = mapped_column(
+        sa.String(20), nullable=True
+    )
+    locked_single_vendor_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        sa.Uuid(as_uuid=True), nullable=True
+    )
+    locked_snapshot_hash: Mapped[Optional[str]] = mapped_column(
+        sa.String(64), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True),
         nullable=False,

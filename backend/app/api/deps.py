@@ -1,4 +1,4 @@
-"""Dependencias de inyección para autenticación (Bearer o cookie HttpOnly), sesión y workspace_id."""
+"""Dependencias de inyección para autenticación (cookie HttpOnly o Bearer interno), verificación y workspace_id."""
 
 import uuid
 from typing import Optional
@@ -6,16 +6,15 @@ from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
-from app.core.security import decode_access_token
+from app.core.security import AUTH_COOKIE_NAME, decode_access_token
 from app.models.workspace import User, Workspace
 from app.services.seed import seed_demo_data_if_needed
 
-AUTH_COOKIE_NAME = "compulsa_access_token"
-
 
 def _extract_jwt_token(request: Request, authorization: Optional[str]) -> Optional[str]:
-    """Extrae el JWT desde el header Authorization Bearer o desde la cookie HttpOnly (H-21)."""
+    """Extrae el JWT desde el header Authorization Bearer o desde la cookie HttpOnly (H-21, H-33)."""
     if authorization:
         if not authorization.startswith("Bearer "):
             raise HTTPException(
@@ -35,7 +34,7 @@ def get_current_workspace(
     authorization: Optional[str] = Header(None),
     x_workspace_id: Optional[str] = Header(None),
 ) -> Workspace:
-    """Resuelve el Workspace activo con validación estricta de identidad para espacios no-Demo."""
+    """Resuelve el Workspace activo con validación estricta de identidad y correo verificado para espacios no-Demo."""
     token = _extract_jwt_token(request, authorization)
 
     if token:
@@ -88,6 +87,11 @@ def get_current_workspace(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Usuario no autorizado o no perteneciente a este espacio de trabajo.",
                 )
+            if settings.REQUIRE_EMAIL_VERIFICATION and not user.email_verified:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Debe verificar su correo electrónico antes de acceder al espacio de trabajo privado.",
+                )
 
         return ws
 
@@ -101,7 +105,7 @@ def get_current_workspace(
             pass
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Se requiere token o sesión autenticada para acceder a un espacio de trabajo privado.",
+            detail="Se requiere sesión autenticada para acceder a un espacio de trabajo privado.",
         )
 
     demo_ws = seed_demo_data_if_needed(db)
@@ -113,7 +117,7 @@ def get_current_user_optional(
     db: Session = Depends(get_db),
     authorization: Optional[str] = Header(None),
 ) -> Optional[User]:
-    """Obtiene el usuario autenticado a partir del header Bearer o cookie HttpOnly si existe y es válido."""
+    """Obtiene el usuario autenticado (y verificado) desde cookie HttpOnly o Bearer si es válido."""
     try:
         token = _extract_jwt_token(request, authorization)
     except HTTPException:
@@ -130,4 +134,9 @@ def get_current_user_optional(
         u_uuid = uuid.UUID(str(user_id))
     except (ValueError, TypeError):
         return None
-    return db.scalar(select(User).where(User.id == u_uuid))
+    user = db.scalar(select(User).where(User.id == u_uuid))
+    if not user:
+        return None
+    if settings.REQUIRE_EMAIL_VERIFICATION and not user.email_verified:
+        return None
+    return user

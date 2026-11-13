@@ -354,6 +354,12 @@ class MatchingEngineService:
 
         # 5. Ranking léxico entre candidatos físicamente válidos (con soporte para alias canónico H-11)
         search_terms = [strip_accents(item.requested_term).lower()]
+        raw_clean = strip_accents(item.raw_line).lower().strip()
+        mat_clean_term = strip_accents(item.material_type or "").lower().strip()
+        raw_with_material = f"{raw_clean} {mat_clean_term}".strip()
+        for extra_term in (raw_with_material, raw_clean):
+            if extra_term and extra_term not in search_terms:
+                search_terms.append(extra_term)
         has_canonical_alias = False
         if alias and alias.canonical_term:
             canonical_clean = strip_accents(alias.canonical_term).lower()

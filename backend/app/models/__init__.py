@@ -4,6 +4,7 @@ from app.models.workspace import Workspace, User
 from app.models.vendor import Vendor, PriceList, VendorProduct, ProductAlias
 from app.models.requisition import Requisition, RequisitionItem
 from app.models.comparison import ComparisonRun, ComparisonItemMatch
+from app.models.telemetry import TractionEvent, AuthSecurityCounter
 
 __all__ = [
     "Workspace",
@@ -16,4 +17,6 @@ __all__ = [
     "RequisitionItem",
     "ComparisonRun",
     "ComparisonItemMatch",
+    "TractionEvent",
+    "AuthSecurityCounter",
 ]

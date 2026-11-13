@@ -73,7 +73,7 @@ export const PublicBudgetViewPage: React.FC<PublicBudgetViewPageProps> = ({ shar
               </span>
             )}
             <span className="text-xs text-content-muted font-mono">
-              Emitido: {data.created_at.slice(0, 10)}
+              Emitido: {(data.locked_at || data.created_at).slice(0, 10)}
             </span>
           </div>
           <h1 className="text-lg font-display font-extrabold text-content-primary tracking-tight">

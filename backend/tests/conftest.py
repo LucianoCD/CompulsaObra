@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.database import Base, get_db
 from app.core.security import auth_rate_limiter
 from app.main import app
+from app.services.email_service import EmailService
 from app.services.seed import seed_demo_data_if_needed
 
 
@@ -26,13 +27,16 @@ def test_engine():
 
 @pytest.fixture(scope="function")
 def db(test_engine):
-    auth_rate_limiter.reset()
+    EmailService.clear_outbox()
     Session = sessionmaker(bind=test_engine)
     session = Session()
+    auth_rate_limiter.reset(db=session)
     seed_demo_data_if_needed(session)
     try:
         yield session
     finally:
+        auth_rate_limiter.reset(db=session)
+        EmailService.clear_outbox()
         session.close()
 
 

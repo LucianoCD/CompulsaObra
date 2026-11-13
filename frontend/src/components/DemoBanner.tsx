@@ -7,6 +7,7 @@ import {
   Sparkles,
   Building2,
   LogIn,
+  LogOut,
   Sun,
   Moon,
   Store,
@@ -27,7 +28,7 @@ export const DemoBanner: React.FC<DemoBannerProps> = ({
   onToggleTheme,
   onOpenCatalogs,
 }) => {
-  const { isDemo, role, workspaceName, switchMode, setRole } = useWorkspaceStore();
+  const { isDemo, role, workspaceName, switchMode, logout, setRole } = useWorkspaceStore();
   const [isAuthOpen, setIsAuthOpen] = useState(false);
 
   const handleRoleKeyDown = (e: React.KeyboardEvent, currentActiveRole: UserRole) => {
@@ -123,13 +124,24 @@ export const DemoBanner: React.FC<DemoBannerProps> = ({
                 <span>Acceder</span>
               </button>
             ) : (
-              <button
-                onClick={() => switchMode(true)}
-                type="button"
-                className="text-xs px-2.5 py-1 rounded-control bg-surface-subtle hover:bg-surface-strong/20 text-content-secondary transition border border-surface-hairline"
-              >
-                Volver a Demo
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => switchMode(true)}
+                  type="button"
+                  className="text-xs px-2.5 py-1 rounded-control bg-surface-subtle hover:bg-surface-strong/20 text-content-secondary transition border border-surface-hairline"
+                >
+                  Volver a Demo
+                </button>
+                <button
+                  onClick={() => logout()}
+                  type="button"
+                  className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-control bg-surface-elevated hover:bg-surface-subtle text-content-secondary hover:text-content-primary transition border border-surface-hairline"
+                  title="Cerrar sesión"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Salir</span>
+                </button>
+              </div>
             )}
           </nav>
         </div>

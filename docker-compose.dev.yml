@@ -7,14 +7,25 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_local_postgres_only}
       POSTGRES_DB: ${POSTGRES_DB:-compulsa_obra}
 
+  redis:
+    ports:
+      - "6379:6379"
+
   backend:
     environment:
       ENVIRONMENT: development
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-compulsa_user}:${POSTGRES_PASSWORD:-dev_local_postgres_only}@db:5432/${POSTGRES_DB:-compulsa_obra}
+      REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:-dev_local_jwt_key_not_for_production_32chars_min}
       HMAC_SHARE_SECRET: ${HMAC_SHARE_SECRET:-dev_local_hmac_key_not_for_production_32chars_min}
       CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173","http://localhost:5174","http://127.0.0.1:5174"]'
-      REQUIRE_EMAIL_VERIFICATION: "false"
+      REQUIRE_EMAIL_VERIFICATION: "true"
+      COOKIE_SECURE: "false"
+      EMAIL_BACKEND: smtp
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_USE_TLS: "false"
+      SMTP_FROM_EMAIL: no-reply@compulsaobra.local
     volumes:
       - ./backend:/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

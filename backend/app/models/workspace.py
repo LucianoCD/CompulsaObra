@@ -73,8 +73,14 @@ class User(Base):
     email_verified: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, default=False
     )
-    verification_token: Mapped[Optional[str]] = mapped_column(
-        sa.String(128), nullable=True
+    verification_token_hash: Mapped[Optional[str]] = mapped_column(
+        sa.String(64), nullable=True
+    )
+    verification_token_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    verification_sent_at: Mapped[Optional[datetime]] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
     )
     failed_login_attempts: Mapped[int] = mapped_column(
         sa.Integer, nullable=False, default=0

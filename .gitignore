@@ -19,6 +19,8 @@ htmlcov/
 *.egg-info/
 frontend/dist/
 frontend/build/
+frontend/test-results/
+frontend/playwright-report/
 
 # Variables de entorno secretas
 .env

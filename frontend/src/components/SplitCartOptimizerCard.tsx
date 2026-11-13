@@ -134,8 +134,8 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
       await apiClient.triggerPdfDownload(
         currentMatrix.run_id,
         mode,
-        budgetStrategy,
-        budgetStrategy === 'SINGLE_VENDOR' ? effectiveSingleVendorId : null
+        isLocked ? undefined : budgetStrategy,
+        isLocked ? null : budgetStrategy === 'SINGLE_VENDOR' ? effectiveSingleVendorId : null
       );
     } catch (err: unknown) {
       setDownloadError(err instanceof Error ? err.message : 'Error al descargar el PDF.');

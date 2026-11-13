@@ -22,6 +22,7 @@ from app.schemas.requisition import (
 )
 from app.api.deps import get_current_workspace
 from app.services.multimodal_extractor import MultimodalExtractorService
+from app.services.traction_service import record_traction_event
 from app.services.unit_normalizer import normalize_material_label, MATERIAL_FAMILIES, strip_accents
 
 router = APIRouter(prefix="/requisitions", tags=["Requisiciones y Desambiguación"])
@@ -111,6 +112,14 @@ def _create_requisition_from_drafts(
         db_items.append(it)
 
     db.add_all(db_items)
+    record_traction_event(
+        db,
+        event_type="REQUISITION_CREATED",
+        workspace_id=current_ws.id,
+        requisition_id=req.id,
+        is_demo=current_ws.is_demo,
+        metadata={"items_count": len(db_items), "source_type": source_type},
+    )
     db.commit()
     db.refresh(req)
 
@@ -379,6 +388,14 @@ def resolve_item_ambiguity(
     if all_confirmed:
         req.status = "READY_TO_COMPARE"
 
+    record_traction_event(
+        db,
+        event_type="ITEM_DISAMBIGUATED",
+        workspace_id=current_ws.id,
+        requisition_id=req.id,
+        is_demo=current_ws.is_demo,
+        metadata={"item_id": str(item.id)},
+    )
     db.commit()
     db.refresh(req)
     return _build_detail_response(req)

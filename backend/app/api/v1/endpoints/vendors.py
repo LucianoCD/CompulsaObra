@@ -23,6 +23,7 @@ from app.schemas.vendor import (
 )
 from app.api.deps import get_current_workspace
 from app.services.catalog_importer import CatalogImporterService
+from app.services.traction_service import record_traction_event
 
 router = APIRouter(prefix="/vendors", tags=["Comercios y Catálogos"])
 
@@ -221,6 +222,18 @@ async def import_vendor_catalog(
         mapping=mapping,
         workspace_id=current_ws.id,
     )
+    record_traction_event(
+        db,
+        event_type="VENDOR_CATALOG_IMPORTED",
+        workspace_id=current_ws.id,
+        is_demo=current_ws.is_demo,
+        metadata={
+            "vendor_id": str(vendor_id),
+            "total_rows": summary.total_rows,
+            "new_or_updated_rows": summary.new_or_updated_rows,
+        },
+    )
+    db.commit()
     return summary
 
 

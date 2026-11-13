@@ -15,8 +15,8 @@ Plataforma inteligente de elaboración de presupuestos y compulsa multi-negocio 
 2. **Guardia Dimensional HITL y Filtro Duro SQL**: Bloquea cualquier ítem con atributos críticos faltantes antes de cotizar y aplica tolerancias estrictas en SQL (`diameter_mm`, `length_m`, `weight_kg`, `material_type`) más umbrales de confianza y desempate para evitar sustituciones ciegas.
 3. **Unidades Comerciales y Precisión Decimal**: Convierte unidades solicitadas frente a presentaciones de venta (`ROLLO`, `BARRA`, `BOLSA`, etc.) con redondeo seguro (`math.ceil`) y aritmética financiera exacta en `Decimal` (`ROUND_HALF_UP`).
 4. **Optimizador Branch-and-Bound y Consistencia de Estrategia**: Evalúa compra en Proveedor Único vs. Carrito Dividido (*Split Cart*) considerando fletes únicos por comercio, propagando la estrategia elegida de forma consistente hacia el congelamiento (`LOCKED_BUDGET`), vista pública y generación de PDFs.
-5. **Presupuestos Inmutables y Firma HMAC-SHA256**: El enlace público `/api/v1/public/comparisons/{token}` expone únicamente el DTO whitelist `PublicClientBudgetResponse` (sin proveedores, costos internos ni márgenes) y valida la firma HMAC sobre el hash del snapshot almacenado.
-6. **Seguridad Web y Operación**: Sesiones respaldadas por cookies `HttpOnly` (`SameSite=Lax`), rate limiting y bloqueo temporal tras intentos fallidos, verificación de email configurable, lectura acotada en streaming para archivos subidos (límite `10 MB` / HTTP `413`), cabeceras `Content-Security-Policy` y validación fail-fast de secretos y migraciones en producción.
+5. **Presupuestos Inmutables y Firma HMAC-SHA256**: Al congelar (`lock-budget`), se sellan en el snapshot bloqueado el título, cliente, estrategia, importes congelados y timestamp (`is_locked`, `locked_snapshot_hash`). El enlace público `/api/v1/public/comparisons/{token}` prohíbe sobreescrituras por `?strategy=`/`?mode=`, expone únicamente el DTO whitelist `PublicClientBudgetResponse` y verifica la firma HMAC sobre el hash completo del snapshot.
+6. **Seguridad Web y Operación**: Sesiones web exclusivas mediante cookies `HttpOnly` (`SameSite=Lax`, sin JWT en JSON ni en `localStorage`) protegidas con Double-Submit CSRF (`compulsa_csrf_token` / `X-CSRF-Token`), rate limiting y lockout distribuidos en Redis (con respaldo transaccional `SELECT ... FOR UPDATE` en PostgreSQL `auth_security_counters`), verificación obligatoria de correo vía SMTP con tokens SHA-256 con expiración y reenvío con cooldown (`Mailpit` en Docker), proxy inverso Nginx `/api/v1/` $\rightarrow$ `backend:8000`, y métricas auditadas en `/traccion` basadas en usuarios verificados, presupuestos congelados (`is_locked`) y tabla `traction_events`.
 
 ---
 
@@ -62,11 +62,16 @@ cd backend
 python -m pip install --no-build-isolation --no-deps -e .
 python -c "from app.models import Workspace, Vendor, PriceList, VendorProduct, Requisition, ComparisonRun; print('MODELS_OK')"
 
-# 2. Lint y suite completa Pytest (E2E-01..E2E-05, CO-01..CO-16 y H-01..H-26)
+# 2. Lint y suite completa Pytest (E2E-01..E2E-05, CO-01..CO-16 y H-01..H-36)
 python -m ruff check .
 python -m pytest -v
 
-# 3. Typecheck estricto y build de producción Frontend
+# 2b. Integración real PostgreSQL 16 + Alembic + Redis 7 (requiere TEST_POSTGRES_URL)
+TEST_POSTGRES_URL="postgresql://compulsa_test:StrongTestPass2026@127.0.0.1:5432/compulsa_test" \
+REDIS_URL="redis://127.0.0.1:6379/0" \
+python -m pytest tests/test_postgres_integration.py -v
+
+# 3. Typecheck estricto, build de producción y E2E Playwright Frontend
 cd ../frontend
-npm run typecheck && npm run build
+npm run typecheck && npm run build && npm run test:e2e
 ```

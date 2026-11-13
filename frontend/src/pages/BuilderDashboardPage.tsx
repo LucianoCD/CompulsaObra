@@ -14,7 +14,7 @@ interface BuilderDashboardPageProps {
 }
 
 export const BuilderDashboardPage: React.FC<BuilderDashboardPageProps> = ({ onOpenCatalogs }) => {
-  const { role } = useWorkspaceStore();
+  const { role, workspaceId } = useWorkspaceStore();
   const { currentRequisition, resetRequisition } = useRequisitionStore();
   const {
     vendors,
@@ -27,7 +27,7 @@ export const BuilderDashboardPage: React.FC<BuilderDashboardPageProps> = ({ onOp
 
   useEffect(() => {
     loadVendors();
-  }, [loadVendors]);
+  }, [loadVendors, workspaceId]);
 
   const handleNewBudget = () => {
     resetRequisition();

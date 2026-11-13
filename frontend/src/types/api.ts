@@ -298,6 +298,8 @@ export interface ComparisonMatrixResponse {
   public_share_token: string;
   snapshot_content_hash?: string | null;
   override_audit_log?: OverrideAuditEntry[];
+  is_locked?: boolean;
+  locked_at?: string | null;
   created_at: string;
 }
 
@@ -330,6 +332,7 @@ export interface PublicClientBudgetResponse {
   grand_total_ars: number;
   created_at: string;
   locked_at?: string | null;
+  is_simulation?: boolean;
   signature_verified: boolean;
 }
 
@@ -355,16 +358,15 @@ export interface LockBudgetResponse {
 }
 
 export interface SessionResponse {
-  access_token: string;
-  token_type: string;
+  authenticated: boolean;
   workspace_id: string;
   workspace_name: string;
   is_demo: boolean;
   role: UserRole;
   email: string;
-  email_verified?: boolean;
-  verification_required?: boolean;
-  verification_token?: string | null;
+  email_verified: boolean;
+  verification_required: boolean;
+  message?: string | null;
 }
 
 export interface RegisterRequest {
@@ -375,6 +377,11 @@ export interface RegisterRequest {
   role?: UserRole;
 }
 
+export interface VerifyEmailRequest {
+  email: string;
+  token: string;
+}
+
 export interface LoginRequest {
   email: string;
   password: string;
@@ -383,5 +390,5 @@ export interface LoginRequest {
 export interface RoleUpdateResponse {
   status: string;
   role: UserRole;
-  access_token: string;
+  workspace_id: string;
 }

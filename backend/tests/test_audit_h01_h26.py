@@ -13,21 +13,24 @@ from sqlalchemy.orm import Session
 
 from app.core import database as db_module
 from app.core.config import Settings, settings
+from app.core.security import AUTH_COOKIE_NAME, CSRF_COOKIE_NAME, CSRF_HEADER_NAME
 from app.models.comparison import ComparisonRun
 from app.models.requisition import Requisition, RequisitionItem
 from app.models.vendor import PriceList, Vendor, VendorProduct
 from app.models.workspace import Workspace
 from app.services.comparison_optimizer import ComparisonOptimizerService
+from app.services.email_service import EmailService
 from app.services.matching_engine import MatchingEngineService
 from app.services.pdf_generator import PDFGeneratorService
 from app.services.unit_normalizer import UnitNormalizerService
 
 
 def _create_private_workspace_session(client: TestClient, suffix: str) -> dict:
+    email = f"auditoria_{suffix}_{uuid.uuid4().hex[:6]}@obra.com.ar"
     res = client.post(
         "/api/v1/auth/register",
         json={
-            "email": f"auditoria_{suffix}_{uuid.uuid4().hex[:6]}@obra.com.ar",
+            "email": email,
             "password": "PasswordSeguro2026!",
             "full_name": "Ing. Auditor",
             "workspace_name": f"Estudio Auditor {suffix}",
@@ -35,7 +38,15 @@ def _create_private_workspace_session(client: TestClient, suffix: str) -> dict:
         },
     )
     assert res.status_code == 201
-    return res.json()
+    ver_token = EmailService.get_outbox(email)[-1].verification_token
+    res_ver = client.post(
+        "/api/v1/auth/verify-email",
+        json={"email": email, "token": ver_token},
+    )
+    assert res_ver.status_code == 200
+    data = res_ver.json()
+    data["csrf_token"] = client.cookies.get(CSRF_COOKIE_NAME)
+    return data
 
 
 def _create_vendor_with_products(
@@ -280,10 +291,9 @@ def test_h02_h03_h04_strategy_consistency_public_whitelist_and_hmac_tamper(clien
     assert res_tampered.status_code == 403
 
 
-def test_h05_private_pdf_requires_auth_and_accepts_bearer_or_cookie(client: TestClient, db: Session):
-    """H-05: Descarga de PDF en workspace privado exige Bearer o cookie HttpOnly y falla con 401 sin credenciales."""
+def test_h05_private_pdf_requires_auth_and_accepts_cookie_auth(client: TestClient, db: Session):
+    """H-05: Descarga de PDF en workspace privado exige sesión cookie HttpOnly y falla con 401 sin credenciales."""
     session_data = _create_private_workspace_session(client, "h05")
-    token = session_data["access_token"]
     ws_id = uuid.UUID(session_data["workspace_id"])
 
     vendor, _ = _create_vendor_with_products(
@@ -303,7 +313,10 @@ def test_h05_private_pdf_requires_auth_and_accepts_bearer_or_cookie(client: Test
         ],
     )
 
-    headers = {"Authorization": f"Bearer {token}", "X-Workspace-Id": str(ws_id)}
+    headers = {
+        "X-Workspace-Id": str(ws_id),
+        CSRF_HEADER_NAME: session_data["csrf_token"],
+    }
     res_in = client.post(
         "/api/v1/requisitions/ingest-json",
         json={"title": "PDF Privado", "raw_text": "2 bolsas cemento 50 kg"},
@@ -320,7 +333,8 @@ def test_h05_private_pdf_requires_auth_and_accepts_bearer_or_cookie(client: Test
     assert res_cmp.status_code == 200
     run_id = res_cmp.json()["run_id"]
 
-    # Sin credenciales -> 401
+    # Guardar cookies reales antes de limpiar para probar unauth -> 401
+    saved_cookies = dict(client.cookies)
     client.cookies.clear()
     res_unauth = client.get(
         f"/api/v1/comparisons/{run_id}/pdf?mode=client_budget",
@@ -328,13 +342,15 @@ def test_h05_private_pdf_requires_auth_and_accepts_bearer_or_cookie(client: Test
     )
     assert res_unauth.status_code == 401
 
-    # Con Bearer -> 200 PDF válido
-    res_bearer = client.get(
+    # Con cookie HttpOnly autenticada -> 200 PDF válido
+    for k, v in saved_cookies.items():
+        client.cookies.set(k, v)
+    res_cookie = client.get(
         f"/api/v1/comparisons/{run_id}/pdf?mode=client_budget",
-        headers=headers,
+        headers={"X-Workspace-Id": str(ws_id)},
     )
-    assert res_bearer.status_code == 200
-    assert res_bearer.content.startswith(b"%PDF-1.")
+    assert res_cookie.status_code == 200
+    assert res_cookie.content.startswith(b"%PDF-1.")
 
 
 def test_h06_nominal_vs_physical_inch_conversion_by_family(db: Session):
@@ -815,8 +831,8 @@ def test_h17_h18_h20_upload_size_limit_and_production_config_and_migrations(
     """H-17, H-18, H-20: Lectura acotada HTTP 413, validación estricta en producción y fail-fast en migraciones."""
     session_data = _create_private_workspace_session(client, "h17")
     headers = {
-        "Authorization": f"Bearer {session_data['access_token']}",
         "X-Workspace-Id": session_data["workspace_id"],
+        CSRF_HEADER_NAME: session_data["csrf_token"],
     }
     res_v = client.post(
         "/api/v1/vendors/",
@@ -869,7 +885,7 @@ def test_h21_h22_h23_httponly_cookie_logout_lockout_verification_and_traction(
     db: Session,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """H-21, H-22, H-23: Cookie HttpOnly, logout, lockout tras 5 fallos, verificación de email y tracción real."""
+    """H-21, H-22, H-23: Cookie HttpOnly + CSRF, logout, lockout tras 5 fallos, verificación de email y tracción real."""
     monkeypatch.setattr(settings, "REQUIRE_EMAIL_VERIFICATION", True)
     email = f"seguridad_{uuid.uuid4().hex[:6]}@obra.com.ar"
     res_reg = client.post(
@@ -885,23 +901,39 @@ def test_h21_h22_h23_httponly_cookie_logout_lockout_verification_and_traction(
     reg_data = res_reg.json()
     assert reg_data["verification_required"] is True
     assert reg_data["email_verified"] is False
-    ver_token = reg_data["verification_token"]
+    assert "verification_token" not in reg_data
+    assert "access_token" not in reg_data
+    ver_token = EmailService.get_outbox(email)[-1].verification_token
 
     # Login sin verificar correo -> 403
     res_unverified = client.post("/api/v1/auth/login", json={"email": email, "password": "PasswordSeguro2026!"})
     assert res_unverified.status_code == 403
 
-    # Verificar email -> 200
+    # Verificar email -> 200 y establece cookie
     res_ver = client.post("/api/v1/auth/verify-email", json={"email": email, "token": ver_token})
     assert res_ver.status_code == 200
+    assert AUTH_COOKIE_NAME in res_ver.cookies
 
-    # Login correcto emite cookie HttpOnly y responde 200
+    # Login correcto emite cookie HttpOnly y responde 200 sin access_token en JSON
     res_ok = client.post("/api/v1/auth/login", json={"email": email, "password": "PasswordSeguro2026!"})
     assert res_ok.status_code == 200
-    assert "compulsa_access_token" in res_ok.cookies
+    assert AUTH_COOKIE_NAME in res_ok.cookies
+    assert "access_token" not in res_ok.json()
 
-    # Logout limpia cookie HttpOnly
-    res_out = client.post("/api/v1/auth/logout")
+    # Crear actividad operativa real para contar como workspace activo en /traccion
+    csrf = client.cookies.get(CSRF_COOKIE_NAME)
+    res_ing = client.post(
+        "/api/v1/requisitions/ingest-json",
+        json={"title": "Actividad Real H23", "raw_text": "10 bolsas cemento"},
+        headers={CSRF_HEADER_NAME: csrf} if csrf else {},
+    )
+    assert res_ing.status_code == 201
+
+    # Logout limpia cookie HttpOnly (exige X-CSRF-Token)
+    res_out = client.post(
+        "/api/v1/auth/logout",
+        headers={CSRF_HEADER_NAME: csrf} if csrf else {},
+    )
     assert res_out.status_code == 200
 
     # 5 intentos fallidos -> lockout HTTP 429 en el 5to fallo / subsiguiente
@@ -919,4 +951,5 @@ def test_h21_h22_h23_httponly_cookie_logout_lockout_verification_and_traction(
     assert "verified_usage_events" in tr
     assert tr["active_real_workspaces"] >= 1
     assert tr["active_real_users"] >= 1
+    assert tr["verified_usage_events"] >= 1
     assert PDFGeneratorService.__name__ == "PDFGeneratorService"

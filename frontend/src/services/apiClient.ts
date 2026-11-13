@@ -1,10 +1,11 @@
 /**
- * Cliente HTTP tipado centralizado con gestión de token y workspace_id.
+ * Cliente HTTP tipado centralizado con sesiones basadas exclusivamente en cookies HttpOnly + CSRF (H-21, H-33).
  */
 
 import {
   SessionResponse,
   RegisterRequest,
+  VerifyEmailRequest,
   LoginRequest,
   RoleUpdateResponse,
   VendorResponse,
@@ -26,39 +27,61 @@ import {
 } from '../types/api';
 
 const BASE_URL = '/api/v1';
+const CSRF_COOKIE_NAME = 'compulsa_csrf_token';
+const CSRF_HEADER_NAME = 'X-CSRF-Token';
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function readCookie(name: string): string | null {
+  if (typeof document === 'undefined' || !document.cookie) {
+    return null;
+  }
+  const prefix = `${name}=`;
+  const parts = document.cookie.split(';');
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith(prefix)) {
+      return decodeURIComponent(trimmed.slice(prefix.length));
+    }
+  }
+  return null;
+}
 
 class ApiClient {
-  private token: string | null = null;
   private workspaceId: string | null = null;
-
-  public setToken(token: string | null) {
-    this.token = token;
-  }
 
   public setWorkspaceId(workspaceId: string | null) {
     this.workspaceId = workspaceId;
   }
 
-  private getHeaders(customHeaders: Record<string, string> = {}): Record<string, string> {
+  private getHeaders(
+    method: string = 'GET',
+    customHeaders: Record<string, string> = {}
+  ): Record<string, string> {
     const headers: Record<string, string> = {
       ...customHeaders,
     };
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
-    }
     if (this.workspaceId) {
       headers['X-Workspace-Id'] = this.workspaceId;
+    }
+    if (MUTATING_METHODS.has(method.toUpperCase())) {
+      const csrfToken = readCookie(CSRF_COOKIE_NAME);
+      if (csrfToken) {
+        headers[CSRF_HEADER_NAME] = csrfToken;
+      }
     }
     return headers;
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    const method = (options.method || 'GET').toUpperCase();
     const headers = this.getHeaders(
+      method,
       (options.headers as Record<string, string>) || {}
     );
 
     const response = await fetch(`${BASE_URL}${endpoint}`, {
       ...options,
+      method,
       credentials: 'include',
       headers,
     });
@@ -70,7 +93,10 @@ class ApiClient {
         if (errorJson?.error?.message) {
           errorMessage = errorJson.error.message;
         } else if (errorJson?.detail) {
-          errorMessage = typeof errorJson.detail === 'string' ? errorJson.detail : JSON.stringify(errorJson.detail);
+          errorMessage =
+            typeof errorJson.detail === 'string'
+              ? errorJson.detail
+              : JSON.stringify(errorJson.detail);
         }
       } catch {
         // Fallback a statusText
@@ -96,6 +122,27 @@ class ApiClient {
     });
   }
 
+  public async verifyEmail(payload: VerifyEmailRequest): Promise<SessionResponse> {
+    return this.request<SessionResponse>('/auth/verify-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async resendVerification(
+    email: string
+  ): Promise<{ status: string; message: string }> {
+    return this.request<{ status: string; message: string }>(
+      '/auth/resend-verification',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      }
+    );
+  }
+
   public async login(payload: LoginRequest): Promise<SessionResponse> {
     return this.request<SessionResponse>('/auth/login', {
       method: 'POST',
@@ -104,8 +151,8 @@ class ApiClient {
     });
   }
 
-  public async getSessionInfo(): Promise<{ workspace_id: string; workspace_name: string; is_demo: boolean; role: UserRole }> {
-    return this.request('/auth/me', {
+  public async getSessionInfo(): Promise<SessionResponse> {
+    return this.request<SessionResponse>('/auth/me', {
       method: 'GET',
     });
   }
@@ -116,7 +163,10 @@ class ApiClient {
     });
   }
 
-  public async switchMode(isDemo: boolean, role: UserRole = 'ESTIMATOR'): Promise<SessionResponse> {
+  public async switchMode(
+    isDemo: boolean,
+    role: UserRole = 'ESTIMATOR'
+  ): Promise<SessionResponse> {
     return this.request<SessionResponse>('/auth/switch-mode', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -158,8 +208,8 @@ class ApiClient {
     formData.append('file', file);
     formData.append('mapping_json', mappingJson);
 
-    const headers = this.getHeaders();
-    delete headers['Content-Type']; // Permite que el navegador establezca multipart/form-data con boundary
+    const headers = this.getHeaders('POST');
+    delete headers['Content-Type'];
 
     const response = await fetch(`${BASE_URL}/vendors/${vendorId}/catalogs/import`, {
       method: 'POST',
@@ -182,7 +232,7 @@ class ApiClient {
 
   // --- Requisiciones & HITL ---
   public async ingestRequisitionForm(formData: FormData): Promise<RequisitionDetailResponse> {
-    const headers = this.getHeaders();
+    const headers = this.getHeaders('POST');
     delete headers['Content-Type'];
 
     const response = await fetch(`${BASE_URL}/requisitions/ingest`, {
@@ -200,7 +250,9 @@ class ApiClient {
     return response.json();
   }
 
-  public async ingestRequisitionJson(payload: RequisitionIngestRequest): Promise<RequisitionDetailResponse> {
+  public async ingestRequisitionJson(
+    payload: RequisitionIngestRequest
+  ): Promise<RequisitionDetailResponse> {
     return this.request<RequisitionDetailResponse>('/requisitions/ingest-json', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -255,7 +307,10 @@ class ApiClient {
     });
   }
 
-  public async lockBudget(runId: string, payload: LockBudgetRequest = {}): Promise<LockBudgetResponse> {
+  public async lockBudget(
+    runId: string,
+    payload: LockBudgetRequest = {}
+  ): Promise<LockBudgetResponse> {
     return this.request<LockBudgetResponse>(`/comparisons/${runId}/lock-budget`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -266,10 +321,13 @@ class ApiClient {
   public getPdfUrl(
     runId: string,
     mode: 'comparison' | 'client_budget' = 'comparison',
-    strategy: BudgetStrategy = 'SPLIT_CART',
+    strategy?: BudgetStrategy,
     singleVendorId?: string | null
   ): string {
-    const params = new URLSearchParams({ mode, strategy });
+    const params = new URLSearchParams({ mode });
+    if (strategy) {
+      params.set('strategy', strategy);
+    }
     if (singleVendorId) {
       params.set('single_vendor_id', singleVendorId);
     }
@@ -279,14 +337,14 @@ class ApiClient {
   public async downloadPdfBlob(
     runId: string,
     mode: 'comparison' | 'client_budget' = 'comparison',
-    strategy: BudgetStrategy = 'SPLIT_CART',
+    strategy?: BudgetStrategy,
     singleVendorId?: string | null
   ): Promise<Blob> {
     const url = this.getPdfUrl(runId, mode, strategy, singleVendorId);
     const response = await fetch(url, {
       method: 'GET',
       credentials: 'include',
-      headers: this.getHeaders(),
+      headers: this.getHeaders('GET'),
     });
     if (!response.ok) {
       let detail = `Error HTTP ${response.status} al descargar PDF`;
@@ -304,7 +362,7 @@ class ApiClient {
   public async triggerPdfDownload(
     runId: string,
     mode: 'comparison' | 'client_budget' = 'comparison',
-    strategy: BudgetStrategy = 'SPLIT_CART',
+    strategy?: BudgetStrategy,
     singleVendorId?: string | null
   ): Promise<void> {
     const blob = await this.downloadPdfBlob(runId, mode, strategy, singleVendorId);
@@ -323,7 +381,9 @@ class ApiClient {
 
   // --- Público y Tracción ---
   public async getPublicComparison(shareToken: string): Promise<PublicClientBudgetResponse> {
-    return this.request<PublicClientBudgetResponse>(`/public/comparisons/${shareToken}?mode=client_budget`);
+    return this.request<PublicClientBudgetResponse>(
+      `/public/comparisons/${encodeURIComponent(shareToken)}`
+    );
   }
 
   public async getTractionMetrics(): Promise<TractionMetricsResponse> {

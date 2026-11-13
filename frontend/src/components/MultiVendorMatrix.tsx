@@ -246,6 +246,7 @@ export const MultiVendorMatrix: React.FC = () => {
                 {row.vendor_cells.map((cell) => {
                   const isNotCarried = cell.match_status === 'NOT_CARRIED';
                   const isOutOfStock = cell.match_status === 'OUT_OF_STOCK';
+                  const isAmbiguous = cell.match_status === 'AMBIGUOUS_CANDIDATES';
                   const isBest = cell.is_best_price;
                   const isSplitWinner = cell.is_selected_split;
 
@@ -269,6 +270,22 @@ export const MultiVendorMatrix: React.FC = () => {
                           <span className="text-[9px] text-content-muted font-sans mt-0.5">
                             Filtro dimensional duro
                           </span>
+                        </div>
+                      ) : isAmbiguous ? (
+                        <div className="inline-flex flex-col items-end gap-1">
+                          <span className="inline-flex items-center gap-1 text-[10px] font-sans px-2 py-0.5 rounded-control bg-semantic-hitlBg text-semantic-hitlText border border-semantic-hitlBorder font-bold">
+                            <AlertTriangle className="w-3 h-3" />
+                            [AMBIGUO - DEFINIR]
+                          </span>
+                          {!isLocked && (
+                            <button
+                              onClick={() => handleOpenOverride(cell, row)}
+                              type="button"
+                              className="inline-flex items-center gap-1 text-[10px] font-sans text-action-primary hover:underline font-semibold"
+                            >
+                              <Edit3 className="w-2.5 h-2.5" /> Elegir producto
+                            </button>
+                          )}
                         </div>
                       ) : isOutOfStock ? (
                         <div className="inline-flex flex-col items-end">

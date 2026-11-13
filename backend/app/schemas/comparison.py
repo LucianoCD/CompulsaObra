@@ -132,6 +132,8 @@ class ComparisonMatrixResponse(BaseModel):
     public_share_token: str
     snapshot_content_hash: Optional[str] = None
     override_audit_log: List[Dict[str, Any]] = Field(default_factory=list)
+    is_locked: bool = False
+    locked_at: Optional[datetime] = None
     created_at: datetime
 
 
@@ -172,6 +174,7 @@ class PublicClientBudgetResponse(BaseModel):
     grand_total_ars: float
     created_at: datetime
     locked_at: Optional[datetime] = None
+    is_simulation: bool = False
     signature_verified: bool = True
 
 

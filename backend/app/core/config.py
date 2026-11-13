@@ -1,7 +1,7 @@
 """Configuración centralizada y tipada con Pydantic Settings V2."""
 
 import secrets
-from typing import List, Union
+from typing import List, Literal, Optional, Union
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -32,12 +32,31 @@ class Settings(BaseSettings):
     HMAC_SHARE_SECRET: str = Field(default_factory=lambda: secrets.token_urlsafe(48))
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 horas
 
-    # Políticas de seguridad de autenticación (H-22)
-    REQUIRE_EMAIL_VERIFICATION: bool = False
+    # Políticas de seguridad de autenticación (H-22, H-28, H-29, H-33, H-34)
+    REQUIRE_EMAIL_VERIFICATION: bool = True
     AUTH_RATE_LIMIT_MAX_REQUESTS: int = 15
     AUTH_RATE_LIMIT_WINDOW_SECONDS: int = 60
     AUTH_LOCKOUT_THRESHOLD: int = 5
     AUTH_LOCKOUT_DURATION_SECONDS: int = 300
+    COOKIE_SECURE: Optional[bool] = None
+
+    # Correo electrónico transaccional (H-29)
+    EMAIL_BACKEND: Literal["smtp", "memory", "file"] = "memory"
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_USE_TLS: bool = True
+    SMTP_USE_SSL: bool = False
+    SMTP_FROM_EMAIL: str = "no-reply@compulsaobra.local"
+    SMTP_FROM_NAME: str = "CompulsaObra"
+    EMAIL_VERIFICATION_EXPIRE_MINUTES: int = 60
+    EMAIL_RESEND_COOLDOWN_SECONDS: int = 60
+    EMAIL_FILE_SINK: str = ""
+    FRONTEND_PUBLIC_URL: str = "http://localhost:5174"
+
+    # Almacén compartido para rate limiting / lockouts entre procesos (H-34)
+    REDIS_URL: str = Field(default="")
 
     # Ingesta y Carga de Archivos
     MAX_UPLOAD_SIZE_BYTES: int = 10 * 1024 * 1024  # 10 MB
@@ -53,6 +72,12 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5174",
         "http://localhost:3000",
     ])
+
+    @property
+    def cookie_secure_effective(self) -> bool:
+        if self.COOKIE_SECURE is not None:
+            return self.COOKIE_SECURE
+        return self.ENVIRONMENT.lower() == "production"
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
@@ -83,6 +108,16 @@ class Settings(BaseSettings):
                 raise ValueError("En entorno de producción no se permite SQLite; utilice PostgreSQL 16.")
             if any(bad in self.DATABASE_URL for bad in INSECURE_DB_PASSWORDS):
                 raise ValueError("DATABASE_URL contiene credenciales por defecto inseguras para producción.")
+            if not self.REQUIRE_EMAIL_VERIFICATION:
+                raise ValueError("En entorno de producción REQUIRE_EMAIL_VERIFICATION debe estar habilitado (true).")
+            if self.EMAIL_BACKEND != "smtp" or not self.SMTP_HOST.strip() or not self.SMTP_FROM_EMAIL.strip():
+                raise ValueError(
+                    "En entorno de producción debe configurarse EMAIL_BACKEND='smtp', SMTP_HOST y SMTP_FROM_EMAIL."
+                )
+            if not self.REDIS_URL.strip():
+                raise ValueError(
+                    "En entorno de producción debe configurarse REDIS_URL para el rate limiting compartido."
+                )
         return self
 
     @field_validator("CORS_ORIGINS", mode="before")
