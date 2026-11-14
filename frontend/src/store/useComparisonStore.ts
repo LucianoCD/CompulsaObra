@@ -10,9 +10,71 @@ import {
   LockBudgetResponse,
   ManualVendorMatchOverride,
   PaymentModality,
+  RequisitionDetailResponse,
   VendorResponse,
 } from '../types/api';
 import { apiClient } from '../services/apiClient';
+
+/**
+ * Determina si la matriz comparativa actual quedó desactualizada frente al pliego (H-39).
+ */
+export function getMatrixRequisitionStaleReason(
+  matrix: ComparisonMatrixResponse | null,
+  requisition: RequisitionDetailResponse | null
+): string | null {
+  if (
+    !matrix ||
+    !requisition ||
+    matrix.is_locked ||
+    matrix.status === 'LOCKED_BUDGET' ||
+    matrix.requisition_id !== requisition.id
+  ) {
+    return null;
+  }
+
+  if (matrix.is_stale || matrix.status === 'STALE') {
+    return (
+      matrix.stale_reason ||
+      'Se modificaron cantidades, unidades o especificaciones del pedido. Actualizá la comparativa antes de emitir.'
+    );
+  }
+
+  if (
+    matrix.requisition_version != null &&
+    requisition.version != null &&
+    matrix.requisition_version !== requisition.version
+  ) {
+    return 'El pedido cambió de versión respecto a la última comparativa. Ejecutá una nueva comparación.';
+  }
+
+  if (
+    matrix.requisition_version_hash &&
+    requisition.version_hash &&
+    matrix.requisition_version_hash !== requisition.version_hash
+  ) {
+    return 'Las especificaciones, cantidades o unidades del pedido difieren de la comparativa actual.';
+  }
+
+  if (matrix.matrix_rows.length !== requisition.items.length) {
+    return 'La cantidad de materiales del pedido cambió respecto a la comparativa actual.';
+  }
+
+  const reqById = new Map(requisition.items.map((it) => [it.id, it]));
+  for (const row of matrix.matrix_rows) {
+    const reqItem = reqById.get(row.requisition_item_id);
+    if (!reqItem) {
+      return 'Los renglones del pedido cambiaron respecto a la comparativa actual.';
+    }
+    if (
+      Math.abs(row.quantity - reqItem.quantity) > 1e-4 ||
+      row.requested_unit.trim().toUpperCase() !== reqItem.requested_unit.trim().toUpperCase()
+    ) {
+      return `Cambió la cantidad o unidad de "${reqItem.requested_term}". Ejecutá una nueva comparativa para recalcular.`;
+    }
+  }
+
+  return null;
+}
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let latestRunSeq = 0;
@@ -44,6 +106,7 @@ interface ComparisonState {
     payload: ManualVendorMatchOverride
   ) => Promise<void>;
   lockBudget: (payload?: LockBudgetRequest) => Promise<void>;
+  markMatrixStale: (reason?: string) => void;
   resetComparison: () => void;
 }
 
@@ -233,6 +296,27 @@ export const useComparisonStore = create<ComparisonState>((set, get) => ({
       });
       throw err;
     }
+  },
+
+  markMatrixStale: (reason?: string) => {
+    const matrix = get().currentMatrix;
+    if (!matrix || get().lockedBudget || matrix.is_locked || matrix.status === 'LOCKED_BUDGET') {
+      return;
+    }
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    set({
+      currentMatrix: {
+        ...matrix,
+        status: 'STALE',
+        is_stale: true,
+        stale_reason:
+          reason ||
+          'El requerimiento fue modificado. Ejecutá una nueva comparación antes de congelar el presupuesto.',
+      },
+    });
   },
 
   resetComparison: () => {

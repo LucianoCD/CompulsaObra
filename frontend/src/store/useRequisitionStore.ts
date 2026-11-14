@@ -8,6 +8,7 @@ import {
   ItemClarificationResolveRequest,
 } from '../types/api';
 import { apiClient } from '../services/apiClient';
+import { useComparisonStore } from './useComparisonStore';
 
 interface RequisitionState {
   currentRequisition: RequisitionDetailResponse | null;
@@ -84,11 +85,19 @@ export const useRequisitionStore = create<RequisitionState>((set, get) => ({
   resolveItem: async (itemId: string, payload: ItemClarificationResolveRequest) => {
     const current = get().currentRequisition;
     if (!current) return;
-    return runRequisitionRequest(
+    await runRequisitionRequest(
       set,
       () => apiClient.resolveItem(current.id, itemId, payload),
       'Error al resolver ítem'
     );
+    const updated = get().currentRequisition;
+    if (updated && updated.id === current.id) {
+      useComparisonStore
+        .getState()
+        .markMatrixStale(
+          'Se modificaron cantidades, unidades o especificaciones del pedido. Actualizá la comparativa antes de emitir el presupuesto.'
+        );
+    }
   },
 
   resetRequisition: () => {

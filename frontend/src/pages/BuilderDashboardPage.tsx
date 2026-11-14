@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo } from 'react';
 import { useWorkspaceStore } from '../store/useWorkspaceStore';
 import { useRequisitionStore } from '../store/useRequisitionStore';
-import { useComparisonStore } from '../store/useComparisonStore';
+import { getMatrixRequisitionStaleReason, useComparisonStore } from '../store/useComparisonStore';
 import { IngestionDropzone } from '../components/IngestionDropzone';
 import { DisambiguationTable } from '../components/DisambiguationTable';
 import { MultiVendorMatrix } from '../components/MultiVendorMatrix';
@@ -57,7 +57,12 @@ export const BuilderDashboardPage: React.FC<BuilderDashboardPageProps> = ({ onOp
     resetComparison();
   };
 
-  const isMatrixStale = useMemo(() => {
+  const requisitionStaleReason = useMemo(
+    () => getMatrixRequisitionStaleReason(currentMatrix, currentRequisition),
+    [currentMatrix, currentRequisition]
+  );
+
+  const isVendorSelectionStale = useMemo(() => {
     if (
       !currentMatrix ||
       !currentRequisition ||
@@ -77,12 +82,14 @@ export const BuilderDashboardPage: React.FC<BuilderDashboardPageProps> = ({ onOp
     return matrixVendorIds.some((id, idx) => id !== currentSelectedIds[idx]);
   }, [currentMatrix, currentRequisition, selectedVendorIds]);
 
+  const isMatrixStale = Boolean(requisitionStaleReason) || isVendorSelectionStale;
+
   const step1Done = currentRequisition !== null;
   const step2HasPending =
     currentRequisition !== null && currentRequisition.pending_clarifications_count > 0;
   const step2Done =
     currentRequisition !== null && currentRequisition.pending_clarifications_count === 0;
-  const step3Done = currentMatrix !== null;
+  const step3Done = currentMatrix !== null && !requisitionStaleReason;
 
   return (
     <div className="max-w-[1440px] mx-auto px-4 sm:px-5 xl:px-6 py-6 space-y-6">
@@ -229,7 +236,9 @@ export const BuilderDashboardPage: React.FC<BuilderDashboardPageProps> = ({ onOp
               <div className="text-xs text-content-muted truncate">
                 {step3Done
                   ? `${currentMatrix.vendors.length} corralones cotizados`
-                  : 'Mejor opción, fletes y presupuesto'}
+                  : requisitionStaleReason
+                    ? 'Comparativa desactualizada'
+                    : 'Mejor opción, fletes y presupuesto'}
               </div>
             </div>
           </li>
@@ -309,18 +318,33 @@ export const BuilderDashboardPage: React.FC<BuilderDashboardPageProps> = ({ onOp
 
         {isMatrixStale && (
           <div
-            role="status"
-            className="p-3 rounded-control bg-semantic-infoBg text-semantic-infoText border border-surface-hairline text-[13px] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+            role={requisitionStaleReason ? 'alert' : 'status'}
+            className={`p-3 rounded-control border text-[13px] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 ${
+              requisitionStaleReason
+                ? 'bg-semantic-hitlBg text-semantic-hitlText border-semantic-hitlBorder'
+                : 'bg-semantic-infoBg text-semantic-infoText border-surface-hairline'
+            }`}
           >
             <div className="flex items-center gap-2 font-medium">
-              <Info className="w-4 h-4 shrink-0" />
+              {requisitionStaleReason ? (
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+              ) : (
+                <Info className="w-4 h-4 shrink-0" />
+              )}
               <span>
-                Cambiaste los corralones seleccionados. Actualizá la comparativa para recalcular los precios.
+                {requisitionStaleReason
+                  ? `Comparativa desactualizada: ${requisitionStaleReason}`
+                  : 'Cambiaste los corralones seleccionados. Actualizá la comparativa para recalcular los precios.'}
               </span>
             </div>
             <button
               type="button"
-              disabled={isComparisonLoading || selectedVendorIds.length === 0 || !currentRequisition}
+              disabled={
+                isComparisonLoading ||
+                selectedVendorIds.length === 0 ||
+                !currentRequisition ||
+                step2HasPending
+              }
               onClick={() => {
                 if (currentRequisition) {
                   void runComparison(currentRequisition.id);
@@ -333,7 +357,7 @@ export const BuilderDashboardPage: React.FC<BuilderDashboardPageProps> = ({ onOp
               ) : (
                 <RefreshCw className="w-3.5 h-3.5" />
               )}
-              <span>Actualizar precios</span>
+              <span>{requisitionStaleReason ? 'Recalcular comparativa' : 'Actualizar precios'}</span>
             </button>
           </div>
         )}

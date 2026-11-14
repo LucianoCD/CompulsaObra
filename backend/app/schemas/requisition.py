@@ -55,6 +55,8 @@ class RequisitionDetailResponse(BaseModel):
     client_name: Optional[str] = None
     source_type: str
     status: str
+    version: int = 1
+    version_hash: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     items: List[RequisitionItemResponse]

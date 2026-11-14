@@ -83,6 +83,15 @@ class ComparisonRun(Base):
     locked_snapshot_hash: Mapped[Optional[str]] = mapped_column(
         sa.String(64), nullable=True
     )
+    requisition_version: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=1, server_default="1"
+    )
+    requisition_version_hash: Mapped[Optional[str]] = mapped_column(
+        sa.String(64), nullable=True
+    )
+    is_stale: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.text("false")
+    )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True),
         nullable=False,

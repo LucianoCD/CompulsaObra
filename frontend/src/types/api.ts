@@ -160,6 +160,8 @@ export interface RequisitionDetailResponse {
   client_name?: string | null;
   source_type: string;
   status: string;
+  version?: number;
+  version_hash?: string | null;
   created_at: string;
   updated_at: string;
   items: RequisitionItemResponse[];
@@ -282,6 +284,10 @@ export interface SplitCartSummary {
 export interface ComparisonMatrixResponse {
   run_id: string;
   requisition_id: string;
+  requisition_version?: number;
+  requisition_version_hash?: string | null;
+  is_stale?: boolean;
+  stale_reason?: string | null;
   status: string;
   fulfillment_status: FulfillmentStatus;
   unresolved_items_count: number;

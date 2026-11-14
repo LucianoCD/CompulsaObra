@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useComparisonStore } from '../store/useComparisonStore';
+import { getMatrixRequisitionStaleReason, useComparisonStore } from '../store/useComparisonStore';
+import { useRequisitionStore } from '../store/useRequisitionStore';
 import { apiClient } from '../services/apiClient';
 import { ComparisonItemCell, ComparisonItemRow, VendorProductResponse } from '../types/api';
 import {
@@ -13,12 +14,20 @@ import {
   Ban,
   Package,
   Filter,
+  RefreshCw,
 } from 'lucide-react';
 
 type MatrixFilterMode = 'all' | 'best_price' | 'unavailable';
 
 export const MultiVendorMatrix: React.FC = () => {
-  const { currentMatrix, lockedBudget, applyMatrixOverride } = useComparisonStore();
+  const { currentRequisition } = useRequisitionStore();
+  const {
+    currentMatrix,
+    lockedBudget,
+    applyMatrixOverride,
+    runComparison,
+    isLoading: isComparisonLoading,
+  } = useComparisonStore();
 
   const [filterMode, setFilterMode] = useState<MatrixFilterMode>('all');
   const [overrideCell, setOverrideCell] = useState<{
@@ -81,9 +90,11 @@ export const MultiVendorMatrix: React.FC = () => {
   if (!currentMatrix) return null;
 
   const isLocked = !!lockedBudget || currentMatrix.status === 'LOCKED_BUDGET' || !!currentMatrix.is_locked;
+  const matrixStaleReason = getMatrixRequisitionStaleReason(currentMatrix, currentRequisition);
+  const isMatrixStale = !isLocked && Boolean(matrixStaleReason);
 
   const handleOpenOverride = async (cell: ComparisonItemCell, row: ComparisonItemRow) => {
-    if (isLocked) return;
+    if (isLocked || isMatrixStale) return;
     setOverrideCell({ cell, row });
     setSelectedProductId(null);
     setForceOverride(false);
@@ -207,13 +218,19 @@ export const MultiVendorMatrix: React.FC = () => {
       {/* Cabecera y Filtros Rápidos */}
       <div className="flex flex-col md:flex-row md:items-center justify-between pb-3 border-b border-surface-hairline gap-3">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-control bg-surface-subtle text-action-primary border border-surface-hairline">
               PASO 3
             </span>
             <h2 id="matrix-heading" className="text-base font-display font-bold text-content-primary">
               3. Comparativa de precios por corralón
             </h2>
+            {isMatrixStale && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-pill bg-semantic-hitlBg border border-semantic-hitlBorder text-semantic-hitlText text-[11px] font-bold">
+                <AlertTriangle className="w-3 h-3" />
+                Matriz desactualizada
+              </span>
+            )}
           </div>
           <p className="text-[13px] text-content-secondary mt-1">
             El mejor precio de cada fila se resalta en verde. Si necesitás cambiar un producto ofrecido, hacé clic en &quot;Cambiar&quot;.
@@ -267,6 +284,41 @@ export const MultiVendorMatrix: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {isMatrixStale && (
+        <div
+          role="alert"
+          className="p-3 rounded-control bg-semantic-hitlBg border border-semantic-hitlBorder text-semantic-hitlText text-[13px] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+        >
+          <div className="flex items-center gap-2 font-medium">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>
+              <strong>Matriz desactualizada:</strong> {matrixStaleReason} No se admiten ajustes manuales ni congelamiento hasta recalcular.
+            </span>
+          </div>
+          <button
+            type="button"
+            disabled={
+              isComparisonLoading ||
+              !currentRequisition ||
+              currentRequisition.pending_clarifications_count > 0
+            }
+            onClick={() => {
+              if (currentRequisition) {
+                void runComparison(currentRequisition.id);
+              }
+            }}
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-50 text-white text-xs font-bold transition min-h-[36px] shrink-0"
+          >
+            {isComparisonLoading ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5" />
+            )}
+            <span>Recalcular comparativa</span>
+          </button>
+        </div>
+      )}
 
       {/* Tabla con Primera Columna Adherida */}
       <div
@@ -392,7 +444,7 @@ export const MultiVendorMatrix: React.FC = () => {
                               <AlertTriangle className="w-3.5 h-3.5" />
                               [AMBIGUO - DEFINIR]
                             </span>
-                            {!isLocked && (
+                            {!isLocked && !isMatrixStale && (
                               <button
                                 onClick={() => void handleOpenOverride(cell, row)}
                                 type="button"
@@ -452,7 +504,7 @@ export const MultiVendorMatrix: React.FC = () => {
                                   Ajuste manual
                                 </span>
                               )}
-                              {!isLocked && (
+                              {!isLocked && !isMatrixStale && (
                                 <button
                                   onClick={() => void handleOpenOverride(cell, row)}
                                   type="button"

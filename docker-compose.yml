@@ -33,6 +33,7 @@ services:
   mailpit:
     image: axllent/mailpit:latest
     container_name: compulsa_mailpit
+    profiles: ["dev", "development", "test"]
     restart: unless-stopped
     ports:
       - "${MAILPIT_PORT:-8025}:8025"
@@ -59,16 +60,16 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:5173","http://127.0.0.1:5173"]}
       REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-true}
-      COOKIE_SECURE: ${COOKIE_SECURE:-false} # Establecer true detras de reverse proxy HTTPS
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
       EMAIL_BACKEND: ${EMAIL_BACKEND:-smtp}
-      SMTP_HOST: ${SMTP_HOST:-mailpit}
-      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_HOST: ${SMTP_HOST:?Defina un proveedor SMTP real en SMTP_HOST antes de iniciar en produccion}
+      SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
       SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
-      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-no-reply@compulsaobra.local}
-      FRONTEND_PUBLIC_URL: ${FRONTEND_PUBLIC_URL:-http://localhost:5173}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:?Defina un remitente valido en SMTP_FROM_EMAIL antes de iniciar en produccion}
+      FRONTEND_PUBLIC_URL: ${FRONTEND_PUBLIC_URL:?Defina una URL publica HTTPS en FRONTEND_PUBLIC_URL antes de iniciar en produccion}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     healthcheck:

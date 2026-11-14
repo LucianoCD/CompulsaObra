@@ -1,15 +1,18 @@
 """Endpoints para Ingesta Multimodal, Requisiciones y Desambiguación Human-in-the-Loop."""
 
+from datetime import datetime, timezone
 import uuid
 from typing import List, Optional
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.database import get_db
 from app.core.config import settings
-from app.core.security import read_upload_file_bounded
+from app.core.security import compute_requisition_version_hash, read_upload_file_bounded
+from app.models.comparison import ComparisonRun
 from app.models.workspace import Workspace
 from app.models.vendor import ProductAlias, Vendor, VendorProduct, PriceList
 from app.models.requisition import Requisition, RequisitionItem
@@ -58,11 +61,36 @@ def _build_detail_response(req: Requisition) -> RequisitionDetailResponse:
         client_name=req.client_name,
         source_type=req.source_type,
         status=req.status,
+        version=int(getattr(req, "version", 1) or 1),
+        version_hash=compute_requisition_version_hash(req),
         created_at=req.created_at,
         updated_at=req.updated_at,
         items=item_responses,
         pending_clarifications_count=pending,
     )
+
+
+def _invalidate_requisition_comparisons(db: Session, req: Requisition, reason: str) -> None:
+    """Incrementa la versión del pliego e invalida compulsas abiertas ante cambios de cantidad/unidad (H-39)."""
+    req.version = int(getattr(req, "version", 1) or 1) + 1
+    req.updated_at = datetime.now(timezone.utc)
+    req.status = "READY_TO_COMPARE" if all(it.is_confirmed for it in req.items) else "NEEDS_CLARIFICATION"
+
+    unlocked_runs = db.scalars(
+        select(ComparisonRun).where(
+            ComparisonRun.requisition_id == req.id,
+            ComparisonRun.is_locked.is_(False),
+        )
+    ).all()
+    for run in unlocked_runs:
+        run.is_stale = True
+        matrix = dict(run.comparison_matrix_json or {})
+        if matrix.get("status") != "LOCKED_BUDGET":
+            matrix["is_stale"] = True
+            matrix["stale_reason"] = reason
+            matrix["status"] = "STALE"
+            run.comparison_matrix_json = matrix
+            flag_modified(run, "comparison_matrix_json")
 
 
 def _create_requisition_from_drafts(
@@ -259,7 +287,9 @@ def resolve_item_ambiguity(
 ):
     """Consola Human-in-the-Loop: define atributos faltantes con validación dimensional estricta (CO-03)."""
     req = db.scalar(
-        select(Requisition).where(
+        select(Requisition)
+        .options(selectinload(Requisition.items))
+        .where(
             Requisition.id == req_id, Requisition.workspace_id == current_ws.id
         )
     )
@@ -279,6 +309,17 @@ def resolve_item_ambiguity(
     )
     if not item:
         raise HTTPException(status_code=404, detail="Ítem no encontrado en esta requisición")
+
+    prev_state = (
+        item.quantity,
+        item.requested_unit,
+        item.diameter_mm,
+        item.length_m,
+        item.weight_kg,
+        item.material_type,
+        item.requested_term,
+        item.is_confirmed,
+    )
 
     # Actualizar campos resueltos o edición inline de cantidad/unidad
     if payload.quantity is not None:
@@ -316,8 +357,16 @@ def resolve_item_ambiguity(
         and not (technical_attr_keys & set(provided_updates.keys()))
     )
     if only_quantity_or_unit_edit:
-        db.commit()
-        db.refresh(req)
+        qty_or_unit_changed = item.quantity != prev_state[0] or item.requested_unit != prev_state[1]
+        if qty_or_unit_changed:
+            db.flush()
+            _invalidate_requisition_comparisons(
+                db,
+                req,
+                f"Se modificó la cantidad o unidad de '{item.requested_term}'. Ejecutá una nueva comparativa antes de bloquear.",
+            )
+            db.commit()
+            db.refresh(req)
         return _build_detail_response(req)
 
     norm_context = strip_accents(f"{item.requested_term} {item.raw_line}").lower()
@@ -403,10 +452,24 @@ def resolve_item_ambiguity(
                     )
                 )
 
-    # Verificar si todos los ítems de la requisición están confirmados
-    all_confirmed = all(it.is_confirmed for it in req.items)
-    if all_confirmed:
-        req.status = "READY_TO_COMPARE"
+    # Verificar si todos los ítems de la requisición están confirmados y actualizar versión/comparativas
+    any_changed = (
+        item.quantity != prev_state[0]
+        or item.requested_unit != prev_state[1]
+        or item.diameter_mm != prev_state[2]
+        or item.length_m != prev_state[3]
+        or item.weight_kg != prev_state[4]
+        or item.material_type != prev_state[5]
+        or item.requested_term != prev_state[6]
+        or item.is_confirmed != prev_state[7]
+    )
+    if any_changed:
+        db.flush()
+        _invalidate_requisition_comparisons(
+            db,
+            req,
+            f"Se actualizaron especificaciones, cantidades o unidades de '{item.requested_term}'. Ejecutá una nueva comparativa.",
+        )
 
     record_traction_event(
         db,

@@ -1,19 +1,24 @@
 """Endpoints para Ejecución de Compulsa, Optimización Split Cart, Congelamiento y PDF."""
 
 import copy
+import hmac
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Literal, Optional
+from typing import Any, Dict, Literal, Optional, Tuple
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.deps import get_current_user_optional, get_current_workspace
 from app.core.database import get_db
 from app.core.exceptions import DimensionMismatchOverrideError, LockedBudgetModificationError
-from app.core.security import compute_matrix_snapshot_hash, generate_hmac_share_token
+from app.core.security import (
+    compute_matrix_snapshot_hash,
+    compute_requisition_version_hash,
+    generate_hmac_share_token,
+)
 from app.models.comparison import ComparisonItemMatch, ComparisonRun
 from app.models.requisition import Requisition
 from app.models.vendor import PriceList, ProductAlias, Vendor, VendorProduct
@@ -31,6 +36,64 @@ from app.services.pdf_generator import PDFGeneratorService
 from app.services.traction_service import record_traction_event
 
 router = APIRouter(tags=["Compulsa y Optimización"])
+
+
+def _check_run_staleness(
+    run: ComparisonRun, req: Optional[Requisition]
+) -> Tuple[bool, Optional[str]]:
+    """Verifica si la compulsa quedó desactualizada respecto al requerimiento actual (H-39)."""
+    matrix: Dict[str, Any] = (
+        run.comparison_matrix_json if isinstance(run.comparison_matrix_json, dict) else {}
+    )
+    if run.is_locked or matrix.get("status") == "LOCKED_BUDGET":
+        return False, None
+
+    if not req:
+        return True, "La requisición asociada no existe."
+
+    if bool(getattr(run, "is_stale", False)) or bool(matrix.get("is_stale")) or matrix.get("status") == "STALE":
+        return True, str(
+            matrix.get("stale_reason")
+            or "La matriz de comparación quedó desactualizada tras modificar el pedido. Ejecutá una nueva comparativa antes de bloquear."
+        )
+
+    run_ver = int(getattr(run, "requisition_version", None) or matrix.get("requisition_version") or 1)
+    cur_ver = int(getattr(req, "version", 1) or 1)
+    if run_ver != cur_ver:
+        return (
+            True,
+            f"El requerimiento cambió (v{run_ver} -> v{cur_ver}). Ejecutá una nueva comparativa antes de bloquear el presupuesto.",
+        )
+
+    expected_hash = getattr(run, "requisition_version_hash", None) or matrix.get("requisition_version_hash")
+    if expected_hash:
+        current_hash = compute_requisition_version_hash(req)
+        if not hmac.compare_digest(str(expected_hash), current_hash):
+            return (
+                True,
+                "Las cantidades, unidades o especificaciones del pedido cambiaron desde esta comparativa. Ejecutá una nueva comparativa.",
+            )
+
+    matrix_rows = matrix.get("matrix_rows") or []
+    req_items = list(getattr(req, "items", []) or [])
+    if matrix_rows and req_items:
+        if len(matrix_rows) != len(req_items):
+            return True, "La cantidad de ítems del requerimiento cambió desde esta comparativa."
+        by_id = {str(it.id): it for it in req_items}
+        for row in matrix_rows:
+            it = by_id.get(str(row.get("requisition_item_id")))
+            if not it:
+                return True, "Los ítems del requerimiento no coinciden con la comparativa."
+            row_qty = float(row.get("quantity", 0) or 0)
+            row_unit = str(row.get("requested_unit", "") or "").strip().upper()
+            it_unit = str(it.requested_unit or "").strip().upper()
+            if abs(row_qty - float(it.quantity)) > 1e-4 or row_unit != it_unit:
+                return (
+                    True,
+                    f"Se modificó la cantidad o unidad de '{it.requested_term}'. Ejecutá una nueva comparativa antes de emitir.",
+                )
+
+    return False, None
 
 
 @router.post("/requisitions/{req_id}/compare", response_model=ComparisonMatrixResponse)
@@ -92,8 +155,25 @@ def get_comparison_run(
     if not run:
         raise HTTPException(status_code=404, detail="Compulsa no encontrada")
 
+    req = db.scalar(
+        select(Requisition)
+        .options(selectinload(Requisition.items))
+        .where(Requisition.id == run.requisition_id)
+    )
+    is_stale, stale_reason = _check_run_staleness(run, req)
+
     data = dict(run.comparison_matrix_json or {})
+    data["requisition_version"] = int(
+        getattr(run, "requisition_version", None) or data.get("requisition_version") or 1
+    )
+    data["requisition_version_hash"] = (
+        getattr(run, "requisition_version_hash", None) or data.get("requisition_version_hash")
+    )
+    data["is_stale"] = is_stale
+    data["stale_reason"] = stale_reason
     data["is_locked"] = bool(run.is_locked or data.get("status") == "LOCKED_BUDGET")
+    if is_stale and not data["is_locked"]:
+        data["status"] = "STALE"
     if run.locked_at and not data.get("locked_at"):
         data["locked_at"] = run.locked_at.isoformat()
     return ComparisonMatrixResponse(**data)
@@ -117,10 +197,20 @@ def override_item_match(
     if not run:
         raise HTTPException(status_code=404, detail="Compulsa no encontrada")
 
-    req = db.scalar(select(Requisition).where(Requisition.id == run.requisition_id))
+    req = db.scalar(
+        select(Requisition)
+        .options(selectinload(Requisition.items))
+        .where(Requisition.id == run.requisition_id)
+    )
     if run.is_locked or (req and req.status == "LOCKED_BUDGET"):
         raise LockedBudgetModificationError(
             "El presupuesto está congelado (LOCKED_BUDGET) y no admite modificaciones en sus productos."
+        )
+    is_stale, stale_reason = _check_run_staleness(run, req)
+    if is_stale:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=stale_reason or "La matriz de comparación está desactualizada. Ejecute una nueva comparación.",
         )
 
     match_rec = db.scalar(
@@ -318,7 +408,11 @@ def lock_budget(
     if not run:
         raise HTTPException(status_code=404, detail="Compulsa no encontrada")
 
-    req = db.scalar(select(Requisition).where(Requisition.id == run.requisition_id))
+    req = db.scalar(
+        select(Requisition)
+        .options(selectinload(Requisition.items))
+        .where(Requisition.id == run.requisition_id)
+    )
 
     if run.is_locked or run.comparison_matrix_json.get("status") == "LOCKED_BUDGET":
         locked_strategy = run.locked_strategy or run.comparison_matrix_json.get("budget_strategy") or "SPLIT_CART"
@@ -347,6 +441,14 @@ def lock_budget(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Esta requisición ya cuenta con un presupuesto congelado definitivo.",
+        )
+
+    is_stale, stale_reason = _check_run_staleness(run, req)
+    if is_stale:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=stale_reason
+            or "La matriz de comparación está desactualizada respecto al requerimiento actual. Ejecute una nueva comparación antes de bloquear el presupuesto.",
         )
 
     matrix = copy.deepcopy(run.comparison_matrix_json)
@@ -409,6 +511,8 @@ def lock_budget(
     matrix["client_name"] = req.client_name if req else matrix.get("client_name")
     matrix["status"] = "LOCKED_BUDGET"
     matrix["is_locked"] = True
+    matrix["is_stale"] = False
+    matrix["stale_reason"] = None
     matrix["fulfillment_status"] = fulfillment_status
     matrix["unresolved_items_count"] = unresolved_count
     matrix["ambiguous_items_count"] = ambiguous_count

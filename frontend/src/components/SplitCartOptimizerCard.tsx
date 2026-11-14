@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { useComparisonStore } from '../store/useComparisonStore';
+import { getMatrixRequisitionStaleReason, useComparisonStore } from '../store/useComparisonStore';
+import { useRequisitionStore } from '../store/useRequisitionStore';
 import { useWorkspaceStore } from '../store/useWorkspaceStore';
 import { apiClient } from '../services/apiClient';
 import {
@@ -15,6 +16,7 @@ import {
   AlertTriangle,
   Loader2,
   Info,
+  RefreshCw,
 } from 'lucide-react';
 import { BudgetStrategy, PaymentModality } from '../types/api';
 
@@ -24,9 +26,11 @@ interface SplitCartOptimizerCardProps {
 
 export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ onLockBudget }) => {
   const { role } = useWorkspaceStore();
+  const { currentRequisition } = useRequisitionStore();
   const {
     currentMatrix,
     lockedBudget,
+    runComparison,
     lockBudget,
     isLoading,
     error,
@@ -110,10 +114,19 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
   const split = currentMatrix.split_cart;
   const isRecommended = split.is_split_recommended;
   const isLocked = !!lockedBudget || currentMatrix.status === 'LOCKED_BUDGET' || !!currentMatrix.is_locked;
+  const matrixStaleReason = getMatrixRequisitionStaleReason(currentMatrix, currentRequisition);
+  const isMatrixStale = !isLocked && Boolean(matrixStaleReason);
   const fulfillmentStatus = currentMatrix.fulfillment_status ?? 'complete';
   const effectiveSingleVendorId = selectedSingleVendorId || currentMatrix.best_single_vendor_id || null;
 
   const handleLock = async () => {
+    if (isMatrixStale) {
+      setLockError(
+        matrixStaleReason ||
+          'El requerimiento cambió desde esta comparativa. Recalculala antes de congelar.'
+      );
+      return;
+    }
     setLockError(null);
     try {
       await lockBudget({
@@ -444,6 +457,44 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
           </div>
         )}
 
+        {isMatrixStale && (
+          <div
+            role="alert"
+            className="p-3 rounded-control bg-semantic-hitlBg border border-semantic-hitlBorder text-semantic-hitlText text-xs space-y-2"
+          >
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-bold">
+                  Matriz desactualizada — no se puede congelar este presupuesto
+                </p>
+                <p>{matrixStaleReason}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={
+                isLoading ||
+                !currentRequisition ||
+                currentRequisition.pending_clarifications_count > 0
+              }
+              onClick={() => {
+                if (currentRequisition) {
+                  void runComparison(currentRequisition.id);
+                }
+              }}
+              className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-50 text-white text-xs font-bold transition min-h-[36px]"
+            >
+              {isLoading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="w-3.5 h-3.5" />
+              )}
+              <span>Actualizar comparativa ahora</span>
+            </button>
+          </div>
+        )}
+
         {(lockError || downloadError || error) && (
           <div
             role="alert"
@@ -458,8 +509,14 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
             onClick={() => void handleLock()}
             disabled={
               isLoading ||
+              isMatrixStale ||
               fulfillmentStatus === 'pending' ||
               (fulfillmentStatus === 'partial' && !acceptPartial)
+            }
+            title={
+              isMatrixStale
+                ? 'Actualizá la comparativa antes de congelar el presupuesto'
+                : undefined
             }
             type="button"
             className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-55 disabled:cursor-not-allowed text-white font-bold text-[13px] shadow-card transition min-h-[44px]"

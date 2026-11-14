@@ -41,6 +41,9 @@ class Requisition(Base):
     status: Mapped[str] = mapped_column(
         sa.String(30), nullable=False, default="DRAFT_EXTRACTED", index=True
     )
+    version: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=1, server_default="1"
+    )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True),
         nullable=False,

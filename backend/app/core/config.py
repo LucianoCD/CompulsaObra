@@ -1,9 +1,17 @@
 """Configuración centralizada y tipada con Pydantic Settings V2."""
 
+from email.utils import parseaddr
+import re
 import secrets
 from typing import List, Literal, Optional, Union
+from urllib.parse import urlparse
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+ALLOWED_ENVIRONMENTS = {"production", "development", "dev", "test", "testing", "local"}
+DISALLOWED_PROD_HOSTS = {"mailpit", "localhost", "127.0.0.1", "0.0.0.0", "::1"}
+DISALLOWED_PROD_TLDS = (".local", ".localhost", ".test", ".example", ".invalid")
+_EMAIL_FORMAT_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 INSECURE_KNOWN_SECRETS = {
     "compulsa_super_secret_jwt_key_2026_noa",
@@ -91,7 +99,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
-        if self.ENVIRONMENT.lower() == "production":
+        env_normalized = self.ENVIRONMENT.strip().lower()
+        if env_normalized not in ALLOWED_ENVIRONMENTS:
+            raise ValueError(
+                f"ENVIRONMENT inválido ('{self.ENVIRONMENT}'). Valores permitidos: {', '.join(sorted(ALLOWED_ENVIRONMENTS))}."
+            )
+
+        if env_normalized == "production":
             if "SECRET_KEY" not in self.model_fields_set:
                 raise ValueError("En entorno de producción debe definirse explícitamente SECRET_KEY.")
             if "HMAC_SHARE_SECRET" not in self.model_fields_set:
@@ -120,9 +134,54 @@ class Settings(BaseSettings):
                 raise ValueError("DATABASE_URL contiene credenciales por defecto inseguras para producción.")
             if not self.REQUIRE_EMAIL_VERIFICATION:
                 raise ValueError("En entorno de producción REQUIRE_EMAIL_VERIFICATION debe estar habilitado (true).")
-            if self.EMAIL_BACKEND != "smtp" or not self.SMTP_HOST.strip() or not self.SMTP_FROM_EMAIL.strip():
+            if self.COOKIE_SECURE is False or not self.cookie_secure_effective:
                 raise ValueError(
-                    "En entorno de producción debe configurarse EMAIL_BACKEND='smtp', SMTP_HOST y SMTP_FROM_EMAIL."
+                    "En entorno de producción COOKIE_SECURE debe ser true; solo se permite false en desarrollo y pruebas."
+                )
+            if self.EMAIL_BACKEND != "smtp":
+                raise ValueError(
+                    "En entorno de producción debe configurarse EMAIL_BACKEND='smtp' con un proveedor SMTP real."
+                )
+
+            smtp_host = self.SMTP_HOST.strip().lower()
+            if (
+                not smtp_host
+                or smtp_host in DISALLOWED_PROD_HOSTS
+                or smtp_host.endswith(DISALLOWED_PROD_TLDS)
+                or "." not in smtp_host
+            ):
+                raise ValueError(
+                    "En entorno de producción SMTP_HOST debe ser un proveedor SMTP real (no se permite mailpit ni localhost)."
+                )
+            if self.SMTP_PORT == 1025:
+                raise ValueError(
+                    "En entorno de producción no se permite SMTP_PORT=1025 (puerto reservado para Mailpit en desarrollo)."
+                )
+
+            _, parsed_email = parseaddr(self.SMTP_FROM_EMAIL.strip())
+            from_email = parsed_email.strip().lower()
+            from_domain = from_email.split("@", 1)[1] if "@" in from_email else ""
+            if (
+                not _EMAIL_FORMAT_RE.match(from_email)
+                or not from_domain
+                or from_domain == "localhost"
+                or from_domain.endswith(DISALLOWED_PROD_TLDS)
+            ):
+                raise ValueError(
+                    "En entorno de producción SMTP_FROM_EMAIL debe ser un remitente válido con dominio público (no se permite .local ni localhost)."
+                )
+
+            parsed_url = urlparse(self.FRONTEND_PUBLIC_URL.strip())
+            public_host = (parsed_url.hostname or "").strip().lower()
+            if (
+                parsed_url.scheme.lower() != "https"
+                or not public_host
+                or public_host in DISALLOWED_PROD_HOSTS
+                or public_host.endswith(DISALLOWED_PROD_TLDS)
+                or "." not in public_host
+            ):
+                raise ValueError(
+                    "En entorno de producción FRONTEND_PUBLIC_URL debe utilizar HTTPS y un dominio público válido (no localhost)."
                 )
             if not self.REDIS_URL.strip():
                 raise ValueError(

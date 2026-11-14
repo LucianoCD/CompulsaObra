@@ -114,6 +114,10 @@ class ComparisonMatrixResponse(BaseModel):
 
     run_id: uuid.UUID
     requisition_id: uuid.UUID
+    requisition_version: int = 1
+    requisition_version_hash: Optional[str] = None
+    is_stale: bool = False
+    stale_reason: Optional[str] = None
     status: str = "COMPARED"
     fulfillment_status: Literal["complete", "partial", "pending"] = "complete"
     unresolved_items_count: int = 0

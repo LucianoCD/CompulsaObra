@@ -13,7 +13,11 @@ from app.core.exceptions import (
     LockedBudgetModificationError,
     WorkspaceIsolationError,
 )
-from app.core.security import compute_matrix_snapshot_hash, generate_hmac_share_token
+from app.core.security import (
+    compute_matrix_snapshot_hash,
+    compute_requisition_version_hash,
+    generate_hmac_share_token,
+)
 from app.models.comparison import ComparisonItemMatch, ComparisonRun
 from app.models.requisition import Requisition, RequisitionItem
 from app.models.vendor import Vendor, VendorProduct
@@ -413,10 +417,16 @@ class ComparisonOptimizerService:
             serialized_rows
         )
 
+        req_version = int(getattr(req, "version", 1) or 1)
+        req_version_hash = compute_requisition_version_hash(req)
         effective_single_vendor_id = selected_single_vendor_id or best_single_id
         matrix_response = ComparisonMatrixResponse(
             run_id=run_id,
             requisition_id=req.id,
+            requisition_version=req_version,
+            requisition_version_hash=req_version_hash,
+            is_stale=False,
+            stale_reason=None,
             status="COMPARED",
             fulfillment_status=fulfillment_status,  # type: ignore[arg-type]
             unresolved_items_count=unresolved_count,
@@ -461,6 +471,9 @@ class ComparisonOptimizerService:
                 existing_run.split_cart_savings_ars = _d(split_summary.savings_vs_single_vendor_ars)
                 existing_run.comparison_matrix_json = matrix_dump
                 existing_run.public_share_token = public_token
+                existing_run.requisition_version = req_version
+                existing_run.requisition_version_hash = req_version_hash
+                existing_run.is_stale = False
                 db.add_all(item_matches_to_save)
             else:
                 comparison_run = ComparisonRun(
@@ -477,6 +490,9 @@ class ComparisonOptimizerService:
                     split_cart_savings_ars=_d(split_summary.savings_vs_single_vendor_ars),
                     comparison_matrix_json=matrix_dump,
                     public_share_token=public_token,
+                    requisition_version=req_version,
+                    requisition_version_hash=req_version_hash,
+                    is_stale=False,
                     created_at=now,
                 )
                 db.add(comparison_run)

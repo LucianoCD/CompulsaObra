@@ -97,6 +97,39 @@ def verify_csrf_token(cookie_token: Optional[str], header_token: Optional[str]) 
     return hmac.compare_digest(cookie_token, header_token)
 
 
+def compute_requisition_version_hash(req: Any) -> str:
+    """Calcula SHA-256 determinístico del contenido técnico, cantidades y unidades del pliego (H-39)."""
+    if req is None:
+        return hashlib.sha256(b"empty_requisition").hexdigest()
+
+    items_sorted = sorted(
+        list(getattr(req, "items", []) or []),
+        key=lambda it: (int(getattr(it, "line_order", 0) or 0), str(getattr(it, "id", ""))),
+    )
+    payload = {
+        "requisition_id": str(getattr(req, "id", "")),
+        "version": int(getattr(req, "version", 1) or 1),
+        "items": [
+            {
+                "id": str(getattr(it, "id", "")),
+                "line_order": int(getattr(it, "line_order", 0) or 0),
+                "requested_term": str(getattr(it, "requested_term", "") or "").strip(),
+                "quantity": f"{float(getattr(it, 'quantity', 0) or 0):.4f}",
+                "requested_unit": str(getattr(it, "requested_unit", "UN") or "UN").strip().upper(),
+                "diameter_mm": f"{float(it.diameter_mm):.4f}" if getattr(it, "diameter_mm", None) is not None else None,
+                "length_m": f"{float(it.length_m):.4f}" if getattr(it, "length_m", None) is not None else None,
+                "weight_kg": f"{float(it.weight_kg):.4f}" if getattr(it, "weight_kg", None) is not None else None,
+                "material_type": str(it.material_type).strip() if getattr(it, "material_type", None) else None,
+                "completeness": str(getattr(it, "completeness", "complete") or "complete"),
+                "is_confirmed": bool(getattr(it, "is_confirmed", False)),
+            }
+            for it in items_sorted
+        ],
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def compute_matrix_snapshot_hash(matrix_data: Optional[Dict[str, Any]]) -> str:
     """Calcula un hash SHA-256 canónico del contenido y metadatos del snapshot (H-04, H-32)."""
     if not isinstance(matrix_data, dict):

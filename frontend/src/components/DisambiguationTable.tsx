@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useRequisitionStore } from '../store/useRequisitionStore';
-import { useComparisonStore } from '../store/useComparisonStore';
+import { getMatrixRequisitionStaleReason, useComparisonStore } from '../store/useComparisonStore';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -8,6 +8,7 @@ import {
   Save,
   Layers,
   HelpCircle,
+  RefreshCw,
 } from 'lucide-react';
 import { RequisitionItemResponse } from '../types/api';
 
@@ -69,6 +70,7 @@ export const DisambiguationTable: React.FC<DisambiguationTableProps> = ({ onProc
   const pendingCount = currentRequisition.pending_clarifications_count;
   const allResolved = pendingCount === 0;
   const isLocked = !!lockedBudget || currentMatrix?.status === 'LOCKED_BUDGET' || !!currentMatrix?.is_locked;
+  const matrixStaleReason = getMatrixRequisitionStaleReason(currentMatrix, currentRequisition);
   const firstPendingItemId = items.find((it) => it.completeness === 'missing_critical_attribute')?.id;
 
   const submitItemResolution = async (
@@ -494,6 +496,31 @@ export const DisambiguationTable: React.FC<DisambiguationTableProps> = ({ onProc
           className="p-3 rounded-control bg-semantic-dangerBg border border-semantic-dangerBorder text-semantic-dangerText text-[13px] font-medium"
         >
           {actionError || compError || reqError}
+        </div>
+      )}
+
+      {matrixStaleReason && !isLocked && (
+        <div
+          role="status"
+          className="p-3 rounded-control bg-semantic-hitlBg border border-semantic-hitlBorder text-semantic-hitlText text-[13px] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+        >
+          <div className="flex items-center gap-2 font-medium">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>
+              <strong>Comparativa desactualizada:</strong> {matrixStaleReason}
+            </span>
+          </div>
+          {allResolved && (
+            <button
+              type="button"
+              disabled={isLoading}
+              onClick={handleStartComparison}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-50 text-white text-xs font-bold transition min-h-[36px] shrink-0"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Recalcular comparativa</span>
+            </button>
+          )}
         </div>
       )}
 
