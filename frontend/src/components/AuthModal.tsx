@@ -76,7 +76,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     try {
       if (step === 'register') {
         if (!fullName.trim()) {
-          throw new Error('Por favor ingresa tu nombre completo.');
+          throw new Error('Por favor ingresá tu nombre completo.');
         }
         const res = await register(
           email.trim(),
@@ -86,7 +86,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
         );
         setInfoMessage(
           res.message ||
-            'Te enviamos un correo con el código/enlace de verificación para activar tu cuenta.'
+            'Te enviamos un correo con el código de verificación para activar tu cuenta.'
         );
         setStep('verify');
       } else if (step === 'verify') {
@@ -138,43 +138,43 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
       ref={dialogRef}
       aria-labelledby="auth-modal-title"
       onClose={handleClose}
-      className="fixed inset-0 m-auto w-full max-w-md bg-surface-elevated border border-surface-hairline rounded-container shadow-2xl p-0 text-content-primary backdrop:bg-black/50 backdrop:backdrop-blur-xs focus:outline-none"
+      className="fixed inset-0 m-auto w-full max-w-md bg-surface-elevated border border-surface-hairline rounded-container shadow-modal p-0 text-content-primary backdrop:bg-black/50 backdrop:backdrop-blur-sm focus:outline-none"
     >
       <div className="p-6 relative">
         <button
           onClick={handleClose}
           type="button"
-          className="absolute top-4 right-4 text-content-muted hover:text-content-primary p-1.5 rounded-control hover:bg-surface-subtle transition"
-          aria-label="Cerrar modal"
+          className="absolute top-4 right-4 text-content-muted hover:text-content-primary p-2 rounded-control hover:bg-surface-subtle transition"
+          aria-label="Cerrar ventana"
         >
           <X className="w-4 h-4" />
         </button>
 
-        <div className="mb-5">
-          <span className="text-[10px] font-mono uppercase text-action-primary font-bold">
-            CompulsaObra ID · Sesión Cookie HttpOnly
+        <div className="mb-5 pr-8">
+          <span className="text-xs font-bold uppercase tracking-wide text-action-primary">
+            Acceso a tu Espacio de Trabajo
           </span>
           <h2
             id="auth-modal-title"
             className="text-lg font-bold text-content-primary font-display mt-0.5"
           >
             {step === 'register'
-              ? 'Crear Cuenta Real de Presupuestador'
+              ? 'Crear Cuenta de Presupuestador'
               : step === 'verify'
                 ? 'Verificar Correo Electrónico'
                 : 'Iniciar Sesión'}
           </h2>
-          <p className="text-xs text-content-secondary mt-1 leading-snug">
+          <p className="text-[13px] text-content-secondary mt-1 leading-snug">
             {step === 'verify'
-              ? 'Confirmá tu dirección de correo con el token enviado para habilitar tu espacio privado.'
-              : 'Accede a tu espacio de trabajo privado para computar materiales y almacenar listas comerciales reales en Jujuy.'}
+              ? 'Confirmá tu dirección de correo con el código enviado para habilitar tu espacio privado.'
+              : 'Guardá tus propios corralones, listas de precios y presupuestos en un espacio privado.'}
           </p>
         </div>
 
         {formError && (
           <div
             role="alert"
-            className="mb-4 p-3 rounded-control bg-action-danger/10 border border-action-danger/30 flex items-start gap-2.5 text-xs text-action-danger font-medium"
+            className="mb-4 p-3 rounded-control bg-semantic-dangerBg border border-semantic-dangerBorder flex items-start gap-2.5 text-[13px] text-semantic-dangerText font-medium"
           >
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{formError}</span>
@@ -184,7 +184,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
         {infoMessage && (
           <div
             role="status"
-            className="mb-4 p-3 rounded-control bg-semantic-winnerBg border border-emerald-600/40 flex items-start gap-2.5 text-xs text-semantic-winnerText font-medium"
+            className="mb-4 p-3 rounded-control bg-semantic-winnerBg border border-emerald-600/30 flex items-start gap-2.5 text-[13px] text-semantic-winnerText font-medium"
           >
             <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{infoMessage}</span>
@@ -195,34 +195,42 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           {step === 'register' && (
             <>
               <div>
-                <label className="block text-xs font-semibold text-content-secondary mb-1">
+                <label
+                  htmlFor="auth-fullname"
+                  className="block text-[13px] font-semibold text-content-secondary mb-1"
+                >
                   Nombre Completo
                 </label>
                 <div className="relative">
-                  <User className="w-4 h-4 text-content-muted absolute left-3 top-2.5" />
+                  <User className="w-4 h-4 text-content-muted absolute left-3 top-3" />
                   <input
+                    id="auth-fullname"
                     type="text"
                     required
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     placeholder="Ej. Ing. Juan Pérez"
-                    className="w-full bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 py-2 text-xs text-content-primary focus:outline-none focus:border-surface-strong"
+                    className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 text-[13px] text-content-primary focus:outline-none focus:border-surface-strong"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-content-secondary mb-1">
-                  Nombre de la Constructora o Estudio (Opcional)
+                <label
+                  htmlFor="auth-workspace"
+                  className="block text-[13px] font-semibold text-content-secondary mb-1"
+                >
+                  Nombre de tu Constructora o Estudio (Opcional)
                 </label>
                 <div className="relative">
-                  <Building2 className="w-4 h-4 text-content-muted absolute left-3 top-2.5" />
+                  <Building2 className="w-4 h-4 text-content-muted absolute left-3 top-3" />
                   <input
+                    id="auth-workspace"
                     type="text"
                     value={workspaceName}
                     onChange={(e) => setWorkspaceName(e.target.value)}
                     placeholder="Ej. Pérez & Asoc. Construcciones"
-                    className="w-full bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 py-2 text-xs text-content-primary focus:outline-none focus:border-surface-strong"
+                    className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 text-[13px] text-content-primary focus:outline-none focus:border-surface-strong"
                   />
                 </div>
               </div>
@@ -230,37 +238,45 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           )}
 
           <div>
-            <label className="block text-xs font-semibold text-content-secondary mb-1">
+            <label
+              htmlFor="auth-email"
+              className="block text-[13px] font-semibold text-content-secondary mb-1"
+            >
               Correo Electrónico
             </label>
             <div className="relative">
-              <Mail className="w-4 h-4 text-content-muted absolute left-3 top-2.5" />
+              <Mail className="w-4 h-4 text-content-muted absolute left-3 top-3" />
               <input
+                id="auth-email"
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="juan@constructora.com"
-                className="w-full bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 py-2 text-xs text-content-primary focus:outline-none focus:border-surface-strong font-mono text-[11px]"
+                className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 text-[13px] text-content-primary focus:outline-none focus:border-surface-strong font-mono"
               />
             </div>
           </div>
 
           {step !== 'verify' && (
             <div>
-              <label className="block text-xs font-semibold text-content-secondary mb-1">
+              <label
+                htmlFor="auth-password"
+                className="block text-[13px] font-semibold text-content-secondary mb-1"
+              >
                 Contraseña
               </label>
               <div className="relative">
-                <Lock className="w-4 h-4 text-content-muted absolute left-3 top-2.5" />
+                <Lock className="w-4 h-4 text-content-muted absolute left-3 top-3" />
                 <input
+                  id="auth-password"
                   type="password"
                   required
                   minLength={6}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 py-2 text-xs text-content-primary focus:outline-none focus:border-surface-strong"
+                  className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 text-[13px] text-content-primary focus:outline-none focus:border-surface-strong"
                 />
               </div>
             </div>
@@ -268,18 +284,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
           {step === 'verify' && (
             <div>
-              <label className="block text-xs font-semibold text-content-secondary mb-1">
-                Código / Token de Verificación
+              <label
+                htmlFor="auth-verify-code"
+                className="block text-[13px] font-semibold text-content-secondary mb-1"
+              >
+                Código de Verificación
               </label>
               <div className="relative">
-                <KeyRound className="w-4 h-4 text-content-muted absolute left-3 top-2.5" />
+                <KeyRound className="w-4 h-4 text-content-muted absolute left-3 top-3" />
                 <input
+                  id="auth-verify-code"
                   type="text"
                   required
                   value={verificationCode}
                   onChange={(e) => setVerificationCode(e.target.value)}
                   placeholder="Pegá el código recibido por correo"
-                  className="w-full bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 py-2 text-xs text-content-primary focus:outline-none focus:border-surface-strong font-mono text-[11px]"
+                  className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 text-[13px] text-content-primary focus:outline-none focus:border-surface-strong font-mono"
                 />
               </div>
             </div>
@@ -288,7 +308,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full py-2.5 px-4 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-50 text-white font-bold text-xs shadow-sm transition flex items-center justify-center gap-2 min-h-[40px]"
+            className="w-full py-2.5 px-4 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-55 text-white font-bold text-[13px] shadow-card transition flex items-center justify-center gap-2 min-h-[44px]"
           >
             {isSubmitting ? (
               <>
@@ -309,7 +329,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               type="button"
               disabled={isSubmitting}
               onClick={handleResend}
-              className="w-full py-2 px-3 rounded-control bg-surface-subtle hover:bg-surface-canvas border border-surface-hairline text-xs font-semibold text-content-secondary hover:text-content-primary transition flex items-center justify-center gap-1.5"
+              className="w-full py-2 px-3 rounded-control bg-surface-subtle hover:bg-surface-canvas border border-surface-hairline text-[13px] font-semibold text-content-secondary hover:text-content-primary transition flex items-center justify-center gap-1.5 min-h-[40px]"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               <span>Reenviar correo de verificación</span>
@@ -326,7 +346,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                 setFormError(null);
                 setInfoMessage(null);
               }}
-              className="text-xs text-content-secondary hover:text-action-primary transition text-center font-semibold"
+              className="text-[13px] text-content-secondary hover:text-action-primary transition text-center font-semibold"
             >
               {step === 'register'
                 ? '¿Ya tienes cuenta? Inicia sesión aquí'
@@ -340,7 +360,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               setStep(step === 'verify' ? 'login' : 'verify');
               setFormError(null);
             }}
-            className="text-[11px] text-content-muted hover:text-action-primary transition text-center font-medium"
+            className="text-xs text-content-muted hover:text-action-primary transition text-center font-medium"
           >
             {step === 'verify'
               ? 'Volver a Iniciar Sesión'

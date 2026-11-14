@@ -20,6 +20,8 @@ class ItemClarificationResolveRequest(BaseModel):
     weight_kg: Optional[float] = None
     material_type: Optional[str] = None
     confirmed_term: Optional[str] = None
+    quantity: Optional[float] = Field(default=None, gt=0)
+    requested_unit: Optional[str] = Field(default=None, min_length=1, max_length=24)
     save_as_alias: bool = False
     vendor_id: Optional[uuid.UUID] = None
 

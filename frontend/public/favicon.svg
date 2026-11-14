@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <style>
+    .bg { fill: #A83511; }
+    .fg { stroke: #FFFFFF; }
+    .accent-stroke { stroke: #FDE68A; }
+    .accent-fill { fill: #FDE68A; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #E8683A; }
+      .fg { stroke: #121316; }
+      .accent-stroke { stroke: #083327; }
+      .accent-fill { fill: #083327; }
+    }
+  </style>
+  <rect class="bg" x="0" y="0" width="32" height="32" rx="7" />
+  <path
+    class="fg"
+    d="M 24.2 7.5 H 7.5 V 24.5 H 24.2"
+    fill="none"
+    stroke-width="2.6"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <line
+    class="fg"
+    x1="12.2"
+    y1="13"
+    x2="24.2"
+    y2="13"
+    stroke-width="2.6"
+    stroke-linecap="round"
+  />
+  <line
+    class="accent-stroke"
+    x1="12.2"
+    y1="19"
+    x2="17"
+    y2="19"
+    stroke-width="2.6"
+    stroke-linecap="round"
+  />
+  <circle class="accent-fill" cx="23.3" cy="19" r="2.2" />
+</svg>

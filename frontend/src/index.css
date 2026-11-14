@@ -3,29 +3,37 @@
 @tailwind utilities;
 
 :root {
-  /* Design Tokens W3C DTCG — Tema Claro (Papel Técnico de Cómputo) */
-  --surface-canvas: #FAF8F5;
-  --surface-elevated: #FFFDF9;
-  --surface-subtle: #F2EFE9;
-  --border-hairline: #DCD7CD;
-  --border-strong: #9E9689;
+  /* Paleta de diseño — Tema Claro (Papel Técnico Cálido) */
+  --surface-canvas: #F7F4EE;
+  --surface-elevated: #FFFFFF;
+  --surface-subtle: #EFECE4;
+  --border-hairline: #DED8CC;
+  --border-strong: #8C8478;
 
-  --text-primary: #16181A;
-  --text-secondary: #4A4F55;
-  --text-muted: #686E77;
+  --text-primary: #1C1917;
+  --text-secondary: #44403C;
+  --text-muted: #57534E;
 
-  --action-primary: #B83B14;
-  --action-primary-hover: #962E0D;
-  --action-focus-ring: #0F52BA;
-  --action-danger: #B91C1C;
+  --action-primary: #A83511;
+  --action-primary-hover: #8C2B0D;
+  --action-focus: #1D4ED8;
+  --action-danger: #DC2626;
+  --brand-mark-bg: #A83511;
+  --brand-mark-fg: #FFFFFF;
+  --brand-mark-accent: #FDE68A;
 
   --winner-bg: #ECFDF5;
   --winner-text: #065F46;
-  --hitl-warning-bg: #FFFBEB;
-  --hitl-warning-border: #D97706;
-  --hitl-warning-text: #78350F;
-  --not-carried-bg: #EFECE6;
-  --not-carried-line: rgba(158, 150, 137, 0.35);
+  --hitl-bg: #FEF9EC;
+  --hitl-border: #D97706;
+  --hitl-text: #78350F;
+  --danger-bg: #FEF2F2;
+  --danger-border: #DC2626;
+  --danger-text: #991B1B;
+  --info-bg: #EFF6FF;
+  --info-text: #1E40AF;
+  --not-carried-bg: #EFECE4;
+  --not-carried-line: rgba(140, 132, 120, 0.32);
 
   --font-display: 'Plus Jakarta Sans', system-ui, sans-serif;
   --font-sans: 'Public Sans', system-ui, sans-serif;
@@ -35,29 +43,37 @@
 }
 
 [data-theme="dark"] {
-  /* Design Tokens W3C DTCG — Tema Oscuro (Pizarra de Obradores) */
-  --surface-canvas: #111315;
-  --surface-elevated: #181B1F;
-  --surface-subtle: #20242A;
-  --border-hairline: #2E333B;
-  --border-strong: #525A65;
+  /* Paleta de diseño — Tema Oscuro (Pizarra Nocturna de Obra) */
+  --surface-canvas: #121316;
+  --surface-elevated: #1A1C20;
+  --surface-subtle: #23262C;
+  --border-hairline: #2F333C;
+  --border-strong: #646B78;
 
-  --text-primary: #F3F4F6;
-  --text-secondary: #ABB2BF;
-  --text-muted: #848D9C;
+  --text-primary: #F5F4F0;
+  --text-secondary: #C2C6CE;
+  --text-muted: #949BA6;
 
-  --action-primary: #E05A2B;
-  --action-primary-hover: #F06D40;
-  --action-focus-ring: #60A5FA;
+  --action-primary: #E8683A;
+  --action-primary-hover: #F27D52;
+  --action-focus: #60A5FA;
   --action-danger: #F87171;
+  --brand-mark-bg: #E8683A;
+  --brand-mark-fg: #121316;
+  --brand-mark-accent: #083327;
 
-  --winner-bg: #06362A;
+  --winner-bg: #083327;
   --winner-text: #6EE7B7;
-  --hitl-warning-bg: #3B2506;
-  --hitl-warning-border: #F59E0B;
-  --hitl-warning-text: #FDE68A;
-  --not-carried-bg: #1C1F24;
-  --not-carried-line: rgba(82, 90, 101, 0.4);
+  --hitl-bg: #362408;
+  --hitl-border: #F59E0B;
+  --hitl-text: #FDE68A;
+  --danger-bg: #3B1619;
+  --danger-border: #F87171;
+  --danger-text: #FECACA;
+  --info-bg: #172554;
+  --info-text: #BFDBFE;
+  --not-carried-bg: #1A1C20;
+  --not-carried-line: rgba(100, 107, 120, 0.4);
 
   color-scheme: dark;
 }
@@ -70,13 +86,11 @@
     line-height: 1.5;
   }
 
-  /* Focus Indicator de Alto Contraste (WCAG 2.2 - Criterio 2.4.13) */
   :focus-visible {
-    outline: 2px solid var(--action-focus-ring);
+    outline: 2px solid var(--action-focus);
     outline-offset: 2px;
   }
 
-  /* Modal Dialog Scroll Containment (Modern Web Guidance) */
   dialog:modal {
     overscroll-behavior: contain;
   }
@@ -85,13 +99,13 @@
   }
 }
 
-/* Tipografía Numérica Monoespaciada y Tabular para Finanzas y Metrología */
+/* Tipografía Numérica Monoespaciada y Tabular para Finanzas y Medidas */
 .tabular-nums {
   font-variant-numeric: tabular-nums slashed-zero;
   font-family: var(--font-mono);
 }
 
-/* Patrón Visual de Trama Diagonal a 45° para Celdas NOT_CARRIED (WCAG 1.4.1) */
+/* Patrón Visual de Trama Diagonal a 45° para Celdas sin stock o sin medida */
 .bg-not-carried-pattern {
   background-color: var(--not-carried-bg);
   background-image: repeating-linear-gradient(
@@ -103,13 +117,12 @@
   );
 }
 
-/* Contenedor de Matriz con Protección de Foco Oculto (WCAG 2.4.11 Focus Not Obscured) */
+/* Contenedor de Matriz con márgenes de desplazamiento para columna adherida */
 .matrix-scroll-container {
   scroll-padding-top: 96px;
-  scroll-padding-inline-start: 280px;
+  scroll-padding-inline-start: 260px;
 }
 
-/* Utilidad Accesible Visually Hidden (Modern Web Guidance) */
 .visually-hidden:where(:not(:focus-within, :active)) {
   position: absolute !important;
   clip-path: inset(50%) !important;
@@ -129,8 +142,18 @@
   z-index: 100;
   padding: 8px 16px;
   background-color: var(--action-primary);
-  color: #FFFDF9;
+  color: #FFFFFF;
   font-weight: 600;
-  border-radius: 4px;
+  border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

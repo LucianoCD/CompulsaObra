@@ -280,7 +280,11 @@ def resolve_item_ambiguity(
     if not item:
         raise HTTPException(status_code=404, detail="Ítem no encontrado en esta requisición")
 
-    # Actualizar campos resueltos
+    # Actualizar campos resueltos o edición inline de cantidad/unidad
+    if payload.quantity is not None:
+        item.quantity = Decimal(str(payload.quantity))
+    if payload.requested_unit is not None:
+        item.requested_unit = payload.requested_unit.strip().upper()
     if payload.diameter_mm is not None:
         item.diameter_mm = Decimal(str(payload.diameter_mm))
     if payload.length_m is not None:
@@ -299,6 +303,22 @@ def resolve_item_ambiguity(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Debe suministrar al menos un atributo técnico (como material constructivo o diámetro) para resolver la ambigüedad del ítem.",
         )
+
+    technical_attr_keys = {
+        "diameter_mm",
+        "length_m",
+        "weight_kg",
+        "material_type",
+        "confirmed_term",
+    }
+    only_quantity_or_unit_edit = (
+        bool({"quantity", "requested_unit"} & set(provided_updates.keys()))
+        and not (technical_attr_keys & set(provided_updates.keys()))
+    )
+    if only_quantity_or_unit_edit:
+        db.commit()
+        db.refresh(req)
+        return _build_detail_response(req)
 
     norm_context = strip_accents(f"{item.requested_term} {item.raw_line}").lower()
     is_critical_fam = any(fam in norm_context for fam in MATERIAL_FAMILIES)

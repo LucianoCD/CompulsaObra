@@ -129,6 +129,8 @@ export interface ItemClarificationResolveRequest {
   weight_kg?: number | null;
   material_type?: string | null;
   confirmed_term?: string | null;
+  quantity?: number | null;
+  requested_unit?: string | null;
   save_as_alias: boolean;
   vendor_id?: string | null;
 }

@@ -15,8 +15,8 @@ interface RequisitionState {
   error: string | null;
 
   ingestPreset: (presetId: string) => Promise<void>;
-  ingestText: (title: string, rawText: string) => Promise<void>;
-  ingestFile: (title: string, file: File) => Promise<void>;
+  ingestText: (title: string, rawText: string, clientName?: string) => Promise<void>;
+  ingestFile: (title: string, file: File, clientName?: string) => Promise<void>;
   resolveItem: (itemId: string, payload: ItemClarificationResolveRequest) => Promise<void>;
   resetRequisition: () => void;
 }
@@ -55,20 +55,24 @@ export const useRequisitionStore = create<RequisitionState>((set, get) => ({
       'Error al cargar preset'
     ),
 
-  ingestText: async (title: string, rawText: string) =>
+  ingestText: async (title: string, rawText: string, clientName?: string) =>
     runRequisitionRequest(
       set,
       () =>
         apiClient.ingestRequisitionJson({
           title: title || 'Pedido de Materiales',
+          client_name: clientName?.trim() || null,
           raw_text: rawText,
         }),
       'Error al procesar texto'
     ),
 
-  ingestFile: async (title: string, file: File) => {
+  ingestFile: async (title: string, file: File, clientName?: string) => {
     const formData = new FormData();
     formData.append('title', title || 'Pedido desde Imagen');
+    if (clientName?.trim()) {
+      formData.append('client_name', clientName.trim());
+    }
     formData.append('image_file', file);
     return runRequisitionRequest(
       set,
