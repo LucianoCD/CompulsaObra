@@ -3,6 +3,8 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import email as email_stdlib
+from email import policy as email_policy
 from pathlib import Path
 import re
 import socket
@@ -401,8 +403,10 @@ def test_h22_h28_h29_email_verification_gate_expiry_resend_and_smtp_delivery(
         assert len(smtp_srv.messages) == 1
         assert "/verificar-correo" in smtp_srv.messages[0]
 
-        # Extraer token enviado por SMTP y confirmar que BD guarda su hash SHA-256 (no texto plano)
-        match = re.search(r"X-Compulsa-Token:\s*([^\r\n]+)", smtp_srv.messages[0])
+        # Extraer token del cuerpo MIME enviado por SMTP y confirmar ausencia de cabecera X-Compulsa-Token
+        parsed_msg_1 = email_stdlib.message_from_string(smtp_srv.messages[0], policy=email_policy.default)
+        assert "X-Compulsa-Token" not in parsed_msg_1
+        match = re.search(r"Código de verificación manual:\s*([^\r\n]+)", str(parsed_msg_1.get_content()))
         assert match is not None
         first_token = match.group(1).strip()
 
@@ -438,7 +442,9 @@ def test_h22_h28_h29_email_verification_gate_expiry_resend_and_smtp_delivery(
         assert res_resend.status_code == 200
         assert len(smtp_srv.messages) == 2
 
-        match2 = re.search(r"X-Compulsa-Token:\s*([^\r\n]+)", smtp_srv.messages[1])
+        parsed_msg_2 = email_stdlib.message_from_string(smtp_srv.messages[1], policy=email_policy.default)
+        assert "X-Compulsa-Token" not in parsed_msg_2
+        match2 = re.search(r"Código de verificación manual:\s*([^\r\n]+)", str(parsed_msg_2.get_content()))
         assert match2 is not None
         second_token = match2.group(1).strip()
         assert second_token != first_token

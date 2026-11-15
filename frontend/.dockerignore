@@ -1,6 +1,7 @@
-node_modules
-dist
-test-results
-playwright-report
-blob-report
-playwright/.cache
+node_modules/
+dist/
+playwright-report/
+test-results/
+.vite/
+.env
+.env.*

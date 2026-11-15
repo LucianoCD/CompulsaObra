@@ -52,7 +52,14 @@ export const AcopioSimulatorPanel: React.FC = () => {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-bold text-content-primary truncate">{v.vendor_name}</span>
-                    <span className="text-xs text-content-muted shrink-0">{v.locality}</span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {acopio?.enabled && (
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-pill bg-surface-elevated border border-surface-hairline text-content-secondary">
+                          {acopio.price_basis === 'CASH' ? 'Base Contado' : 'Base Lista'}
+                        </span>
+                      )}
+                      <span className="text-xs text-content-muted">{v.locality}</span>
+                    </div>
                   </div>
 
                   {acopio?.enabled ? (
@@ -77,11 +84,21 @@ export const AcopioSimulatorPanel: React.FC = () => {
                       <div className="grid grid-cols-3 gap-1.5 pt-1 text-xs text-content-secondary font-mono border-t border-surface-hairline/70">
                         <div className="flex items-center gap-1">
                           <Calendar className="w-3.5 h-3.5 text-content-muted shrink-0" />
-                          <span>{acopio.freeze_days}d precio</span>
+                          <span>
+                            {acopio.freeze_days}d precio
+                            {acopio.freeze_until_date
+                              ? ` (${new Date(acopio.freeze_until_date).toLocaleDateString('es-AR')})`
+                              : ''}
+                          </span>
                         </div>
                         <div className="flex items-center gap-1">
                           <ShieldCheck className="w-3.5 h-3.5 text-content-muted shrink-0" />
-                          <span>{acopio.max_withdrawal_days}d retiro</span>
+                          <span>
+                            {acopio.max_withdrawal_days}d retiro
+                            {acopio.max_withdrawal_date
+                              ? ` (${new Date(acopio.max_withdrawal_date).toLocaleDateString('es-AR')})`
+                              : ''}
+                          </span>
                         </div>
                         <div className="flex items-center gap-1 justify-end">
                           <Clock className="w-3.5 h-3.5 text-content-muted shrink-0" />

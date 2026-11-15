@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, Literal, Optional, Tuple
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -124,6 +124,7 @@ def run_comparison(
         selected_single_vendor_id=payload.selected_single_vendor_id,
         existing_run_id=payload.existing_run_id,
         persist=payload.persist,
+        commit=False,
     )
     if payload.persist:
         record_traction_event(
@@ -148,9 +149,8 @@ def get_comparison_run(
 ):
     """Obtiene el resultado y matriz comparativa de una compulsa guardada."""
     run = db.scalar(
-        select(ComparisonRun).where(
-            ComparisonRun.id == run_id, ComparisonRun.workspace_id == current_ws.id
-        )
+        select(ComparisonRun)
+        .where(ComparisonRun.id == run_id, ComparisonRun.workspace_id == current_ws.id)
     )
     if not run:
         raise HTTPException(status_code=404, detail="Compulsa no encontrada")
@@ -190,9 +190,9 @@ def override_item_match(
 ):
     """Sustitución manual validada (material, diámetro, longitud, peso) con justificación y auditoría (H-10)."""
     run = db.scalar(
-        select(ComparisonRun).where(
-            ComparisonRun.id == run_id, ComparisonRun.workspace_id == current_ws.id
-        )
+        select(ComparisonRun)
+        .where(ComparisonRun.id == run_id, ComparisonRun.workspace_id == current_ws.id)
+        .with_for_update()
     )
     if not run:
         raise HTTPException(status_code=404, detail="Compulsa no encontrada")
@@ -201,6 +201,7 @@ def override_item_match(
         select(Requisition)
         .options(selectinload(Requisition.items))
         .where(Requisition.id == run.requisition_id)
+        .with_for_update()
     )
     if run.is_locked or (req and req.status == "LOCKED_BUDGET"):
         raise LockedBudgetModificationError(
@@ -238,7 +239,15 @@ def override_item_match(
         )
 
     req_item = match_rec.requisition_item
+    vendor = db.scalar(select(Vendor).where(Vendor.id == match_rec.vendor_id))
+    price = MatchingEngineService.resolve_effective_unit_price(prod, vendor, run.payment_modality)
+    comm_qty, sale_unit_used, conv_note, is_safe = MatchingEngineService.calculate_commercial_quantity(
+        req_item, prod
+    )
+
     discrepancies = ComparisonOptimizerService.detect_technical_discrepancies(req_item, prod)
+    if not is_safe:
+        discrepancies.append(conv_note or "Conversión dimensional de unidad insegura o incompatible")
 
     if discrepancies and not payload.force_dimension_override:
         raise DimensionMismatchOverrideError(" | ".join(discrepancies))
@@ -246,30 +255,29 @@ def override_item_match(
     reason_text = (payload.override_reason or "").strip()
     if discrepancies and payload.force_dimension_override and not reason_text:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422),
             detail=(
                 "Toda excepción técnica sobre material o dimensiones requiere una justificación "
                 f"explícita (override_reason). Discrepancias detectadas: {' | '.join(discrepancies)}"
             ),
         )
 
-    vendor = db.scalar(select(Vendor).where(Vendor.id == match_rec.vendor_id))
-    price = MatchingEngineService.resolve_effective_unit_price(prod, vendor, run.payment_modality)
-    comm_qty, sale_unit_used, conv_note, _ = MatchingEngineService.calculate_commercial_quantity(
-        req_item, prod
-    )
     line_sub_dec = (price * comm_qty).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     match_rec.vendor_product_id = prod.id
     match_rec.match_status = "EXACT_MATCH"
     match_rec.unit_price_applied_ars = price
     match_rec.line_subtotal_ars = line_sub_dec
+    match_rec.similarity_score = Decimal("1.0")
 
     if payload.save_vendor_alias:
-        terms_to_save = {req_item.raw_line.strip(), req_item.requested_term.strip()}
+        canonical_truncated = prod.raw_description[:200]
+        terms_to_save = {
+            t.strip()[:180]
+            for t in (req_item.raw_line, req_item.requested_term)
+            if t and t.strip()
+        }
         for alias_term in terms_to_save:
-            if not alias_term:
-                continue
             existing_alias = db.scalar(
                 select(ProductAlias).where(
                     ProductAlias.workspace_id == current_ws.id,
@@ -278,7 +286,7 @@ def override_item_match(
                 )
             )
             if existing_alias:
-                existing_alias.canonical_term = prod.raw_description
+                existing_alias.canonical_term = canonical_truncated
                 existing_alias.target_vendor_product_id = prod.id
                 existing_alias.is_active = True
             else:
@@ -288,7 +296,7 @@ def override_item_match(
                         workspace_id=current_ws.id,
                         vendor_id=match_rec.vendor_id,
                         alias_term=alias_term,
-                        canonical_term=prod.raw_description,
+                        canonical_term=canonical_truncated,
                         target_vendor_product_id=prod.id,
                         is_active=True,
                     )
@@ -301,8 +309,10 @@ def override_item_match(
         "requisition_item_id": str(req_item.id),
         "vendor_id": str(match_rec.vendor_id),
         "new_vendor_product_id": str(prod.id),
+        "new_product_id": str(prod.id),
         "discrepancies": discrepancies,
         "forced_exception": bool(discrepancies and payload.force_dimension_override),
+        "forced_override": bool(discrepancies and payload.force_dimension_override),
         "reason": reason_text or "Sustitución manual dentro de tolerancia técnica",
     }
 
@@ -325,6 +335,8 @@ def override_item_match(
                     cell["conversion_note"] = conv_note
                     cell["unit_price_ars"] = float(price)
                     cell["line_subtotal_ars"] = float(line_sub_dec)
+                    cell["similarity_score"] = 1.0
+                    cell["candidate_options"] = []
                     cell["override_audit"] = audit_entry
 
     vendors_in_run = db.scalars(
@@ -360,20 +372,34 @@ def override_item_match(
     if "savings_vs_single_vendor_ars" in split_cart_data:
         run.split_cart_savings_ars = Decimal(str(split_cart_data["savings_vs_single_vendor_ars"]))
 
+    true_pairs = []
+    false_pairs = []
     for row in matrix.get("matrix_rows", []):
         r_item_id = uuid.UUID(str(row["requisition_item_id"]))
         for cell in row.get("vendor_cells", []):
             c_vendor_id = uuid.UUID(str(cell["vendor_id"]))
-            is_split = bool(cell.get("is_selected_split", False))
-            db.execute(
-                update(ComparisonItemMatch)
-                .where(
-                    ComparisonItemMatch.comparison_run_id == run.id,
-                    ComparisonItemMatch.requisition_item_id == r_item_id,
-                    ComparisonItemMatch.vendor_id == c_vendor_id,
+            if cell.get("is_selected_split", False):
+                true_pairs.append((r_item_id, c_vendor_id))
+            else:
+                false_pairs.append((r_item_id, c_vendor_id))
+
+    for flag_val, pairs in ((True, true_pairs), (False, false_pairs)):
+        if not pairs:
+            continue
+        pair_filter = or_(
+            *(
+                and_(
+                    ComparisonItemMatch.requisition_item_id == r_id,
+                    ComparisonItemMatch.vendor_id == v_id,
                 )
-                .values(is_selected_for_split_cart=is_split)
+                for r_id, v_id in pairs
             )
+        )
+        db.execute(
+            update(ComparisonItemMatch)
+            .where(ComparisonItemMatch.comparison_run_id == run.id, pair_filter)
+            .values(is_selected_for_split_cart=flag_val)
+        )
 
     record_traction_event(
         db,
@@ -401,9 +427,9 @@ def lock_budget(
 ):
     """Congela la comparativa validando completitud, fijando estrategia inmutable y sellando HMAC completo (H-02, H-04, H-32)."""
     run = db.scalar(
-        select(ComparisonRun).where(
-            ComparisonRun.id == run_id, ComparisonRun.workspace_id == current_ws.id
-        )
+        select(ComparisonRun)
+        .where(ComparisonRun.id == run_id, ComparisonRun.workspace_id == current_ws.id)
+        .with_for_update()
     )
     if not run:
         raise HTTPException(status_code=404, detail="Compulsa no encontrada")
@@ -412,6 +438,7 @@ def lock_budget(
         select(Requisition)
         .options(selectinload(Requisition.items))
         .where(Requisition.id == run.requisition_id)
+        .with_for_update()
     )
 
     if run.is_locked or run.comparison_matrix_json.get("status") == "LOCKED_BUDGET":
@@ -585,7 +612,11 @@ def download_comparison_pdf(
     if not run:
         raise HTTPException(status_code=404, detail="Compulsa no encontrada")
 
-    req = db.scalar(select(Requisition).where(Requisition.id == run.requisition_id))
+    req = db.scalar(
+        select(Requisition)
+        .options(selectinload(Requisition.items))
+        .where(Requisition.id == run.requisition_id)
+    )
     matrix = run.comparison_matrix_json if isinstance(run.comparison_matrix_json, dict) else {}
     is_locked = bool(run.is_locked or matrix.get("status") == "LOCKED_BUDGET")
 
@@ -611,6 +642,21 @@ def download_comparison_pdf(
         title = str(matrix.get("title") or (req.title if req else "Presupuesto de Materiales"))
         client_name = matrix.get("client_name") if "client_name" in matrix else (req.client_name if req else None)
     else:
+        is_stale, stale_reason = _check_run_staleness(run, req)
+        if is_stale:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=stale_reason or "La comparativa está desactualizada respecto al requerimiento actual.",
+            )
+        if single_vendor_id is not None:
+            valid_vendor_ids = {
+                str(v.get("vendor_id")) for v in matrix.get("vendors", []) if v.get("vendor_id")
+            }
+            if single_vendor_id not in valid_vendor_ids:
+                raise HTTPException(
+                    status_code=getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422),
+                    detail="El proveedor indicado no pertenece a esta compulsa.",
+                )
         effective_strategy = strategy
         effective_vendor_id = single_vendor_id
         title = req.title if req else "Presupuesto de Materiales"

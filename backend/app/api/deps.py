@@ -140,3 +140,23 @@ def get_current_user_optional(
     if settings.REQUIRE_EMAIL_VERIFICATION and not user.email_verified:
         return None
     return user
+
+
+def get_demo_role_from_token(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+) -> Optional[str]:
+    """Lee el rol operativo activo ('BUYER' | 'ESTIMATOR') desde el JWT para aislar sesiones Demo."""
+    try:
+        token = _extract_jwt_token(request, authorization)
+    except HTTPException:
+        return None
+    if not token:
+        return None
+    payload = decode_access_token(token)
+    if not payload:
+        return None
+    role = payload.get("role")
+    if role in ("BUYER", "ESTIMATOR"):
+        return str(role)
+    return None

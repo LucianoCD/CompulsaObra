@@ -6,7 +6,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 import sqlalchemy as sa
 from sqlalchemy import distinct, exists, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
 from app.core.security import verify_hmac_share_token
@@ -95,6 +95,7 @@ def get_public_budget_view(
         str(run.requisition_id),
         matrix_json,
         expected_snapshot_hash=run.locked_snapshot_hash,
+        expected_run_id=str(run.id),
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -288,6 +289,7 @@ def get_traction_metrics(db: Session = Depends(get_db)):
     # 7. Mediana real de tiempo de elaboración desde creación de requisición hasta emisión (locked_at)
     locked_runs = db.scalars(
         select(ComparisonRun)
+        .options(selectinload(ComparisonRun.requisition))
         .join(Workspace, ComparisonRun.workspace_id == Workspace.id)
         .join(Requisition, ComparisonRun.requisition_id == Requisition.id)
         .where(

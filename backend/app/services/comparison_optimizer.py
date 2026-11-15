@@ -20,7 +20,7 @@ from app.core.security import (
 )
 from app.models.comparison import ComparisonItemMatch, ComparisonRun
 from app.models.requisition import Requisition, RequisitionItem
-from app.models.vendor import Vendor, VendorProduct
+from app.models.vendor import PriceList, ProductAlias, Vendor, VendorProduct
 from app.schemas.comparison import (
     ComparisonItemCell,
     ComparisonItemRow,
@@ -150,6 +150,7 @@ class ComparisonOptimizerService:
         selected_single_vendor_id: Optional[uuid.UUID] = None,
         existing_run_id: Optional[uuid.UUID] = None,
         persist: bool = True,
+        commit: bool = True,
     ) -> ComparisonMatrixResponse:
         """Ejecuta la compulsa completa entre comercios seleccionados con optimización Branch-and-Bound."""
         req = db.scalar(select(Requisition).where(Requisition.id == requisition_id))
@@ -217,6 +218,36 @@ class ComparisonOptimizerService:
         vendor_matches_by_id: Dict[uuid.UUID, List[Dict[str, Any]]] = {v.id: [] for v in vendors}
         item_matches_to_save: List[ComparisonItemMatch] = []
 
+        # Precarga masiva para evitar N+1 queries en el bucle I x V (D-H2)
+        active_vendor_ids = [v.id for v in vendors]
+        all_active_pls = db.scalars(
+            select(PriceList)
+            .where(PriceList.vendor_id.in_(active_vendor_ids), PriceList.is_active.is_(True))
+            .order_by(PriceList.version_number.desc())
+        ).all()
+        active_pls_by_vendor: Dict[uuid.UUID, PriceList] = {}
+        for pl in all_active_pls:
+            if pl.vendor_id not in active_pls_by_vendor:
+                active_pls_by_vendor[pl.vendor_id] = pl
+
+        active_pl_ids = [pl.id for pl in active_pls_by_vendor.values()]
+        products_by_vendor: Dict[uuid.UUID, List[VendorProduct]] = {vid: [] for vid in active_vendor_ids}
+        if active_pl_ids:
+            all_active_products = db.scalars(
+                select(VendorProduct).where(VendorProduct.price_list_id.in_(active_pl_ids))
+            ).all()
+            for prod in all_active_products:
+                products_by_vendor.setdefault(prod.vendor_id, []).append(prod)
+
+        preloaded_aliases = list(
+            db.scalars(
+                select(ProductAlias).where(
+                    ProductAlias.workspace_id == req.workspace_id,
+                    ProductAlias.is_active.is_(True),
+                )
+            ).all()
+        )
+
         for it in items:
             row_cells: List[ComparisonItemCell] = []
             best_cell_sub: Optional[Decimal] = None
@@ -230,6 +261,10 @@ class ComparisonOptimizerService:
                     item=it,
                     vendor_id=v.id,
                     payment_modality=payment_modality,
+                    vendor=v,
+                    active_price_list=active_pls_by_vendor.get(v.id),
+                    preloaded_aliases=preloaded_aliases,
+                    preloaded_vendor_products=products_by_vendor.get(v.id, []),
                 )
 
                 unit_dec = (
@@ -359,6 +394,7 @@ class ComparisonOptimizerService:
 
                 acopio_summary = {
                     "enabled": True,
+                    "price_basis": "CASH" if str(acopio_cfg.get("price_basis", "LIST")).upper() == "CASH" else "LIST",
                     "min_down_payment_pct": float(down_pct_dec),
                     "down_payment_ars": float(down_payment_dec),
                     "remaining_balance_ars": float(balance_dec),
@@ -499,7 +535,10 @@ class ComparisonOptimizerService:
                 db.add_all(item_matches_to_save)
 
             req.status = "COMPARED"
-            db.commit()
+            if commit:
+                db.commit()
+            else:
+                db.flush()
 
         return matrix_response
 
@@ -674,6 +713,7 @@ class ComparisonOptimizerService:
                 added_fee = vendor_fees.get(cand_v, Decimal("0")) if is_new else Decimal("0")
                 next_fee = cur_fee + added_fee
                 next_mat = cur_mat + prices[cand_v]
+                b_cost = best_state["cost"]
                 if b_cost is not None and (next_mat + next_fee + suffix_min_mat[idx + 1]) > b_cost:
                     continue
                 if is_new:
@@ -842,6 +882,7 @@ class ComparisonOptimizerService:
 
                 acopio_sum = {
                     "enabled": True,
+                    "price_basis": "CASH" if str(acopio_cfg.get("price_basis", "LIST")).upper() == "CASH" else "LIST",
                     "min_down_payment_pct": float(down_pct_dec),
                     "down_payment_ars": float(down_payment_dec),
                     "remaining_balance_ars": float(balance_dec),

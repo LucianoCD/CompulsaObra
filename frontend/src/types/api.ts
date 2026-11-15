@@ -6,7 +6,7 @@
 export type CompletenessStatus = 'complete' | 'missing_critical_attribute' | 'user_resolved';
 export type PaymentModality = 'CASH' | 'LIST' | 'ACOPIO';
 export type MatchStatus = 'EXACT_MATCH' | 'AMBIGUOUS_CANDIDATES' | 'OUT_OF_STOCK' | 'NOT_CARRIED';
-export type UserRole = 'BUYER' | 'ESTIMATOR' | 'ADMIN';
+export type UserRole = 'BUYER' | 'ESTIMATOR';
 
 export interface PhysicalDimensions {
   diameter_inch?: string | null;
@@ -44,6 +44,7 @@ export interface AcopioConfig {
 
 export interface AcopioSummary {
   enabled: boolean;
+  price_basis?: 'LIST' | 'CASH';
   min_down_payment_pct: number;
   down_payment_ars: number;
   remaining_balance_ars: number;
@@ -177,6 +178,7 @@ export interface CandidateOption {
   description: string;
   unit_price_ars?: number | null;
   sale_unit?: string | null;
+  score?: number | null;
   similarity_score?: number | null;
   diameter_mm?: number | null;
   length_m?: number | null;
@@ -190,9 +192,11 @@ export interface OverrideAuditEntry {
   timestamp: string;
   reason?: string | null;
   discrepancies: string[];
-  forced_override: boolean;
+  forced_exception?: boolean;
+  forced_override?: boolean;
   previous_product_id?: string | null;
-  new_product_id: string;
+  new_product_id?: string | null;
+  new_vendor_product_id?: string | null;
   requisition_item_id?: string | null;
   vendor_id?: string | null;
 }

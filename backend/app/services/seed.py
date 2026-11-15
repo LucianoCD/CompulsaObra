@@ -3,7 +3,8 @@
 import uuid
 import hashlib
 from decimal import Decimal
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.workspace import Workspace, User
@@ -16,6 +17,9 @@ def seed_demo_data_if_needed(db: Session) -> Workspace:
     demo_ws = db.scalar(select(Workspace).where(Workspace.is_demo.is_(True)))
     if demo_ws:
         return demo_ws
+
+    bind = db.get_bind()
+    is_postgres = bind is not None and bind.dialect.name == "postgresql"
 
     demo_ws_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
     demo_ws = Workspace(
@@ -34,9 +38,17 @@ def seed_demo_data_if_needed(db: Session) -> Workspace:
         full_name="Presupuestador Demo Jujuy",
         password_hash=get_password_hash("demo123"),
         role="ESTIMATOR",
+        email_verified=True,
     )
     db.add(demo_user)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        existing = db.scalar(select(Workspace).where(Workspace.is_demo.is_(True)))
+        if existing:
+            return existing
+        raise
 
     # 1. Corralón El Pórtico - Demo
     vendor_1_id = uuid.UUID("11111111-1111-1111-1111-111111111111")
@@ -51,6 +63,7 @@ def seed_demo_data_if_needed(db: Session) -> Workspace:
         estimate_delivery_fee_ars=Decimal("15000.00"),
         acopio_config_json={
             "enabled": True,
+            "price_basis": "LIST",
             "min_down_payment_pct": 100.0,
             "freeze_days": 30,
             "max_withdrawal_days": 60,
@@ -162,6 +175,9 @@ def seed_demo_data_if_needed(db: Session) -> Workspace:
             row_sha256=hashlib.sha256(b"PORT-TER-34||cano termofusion agua 3/4 pulgada x 6 m").hexdigest(),
         ),
     ]
+    if is_postgres:
+        for p in prods_v1:
+            p.search_vector = func.to_tsvector("spanish", func.unaccent(p.normalized_description))
     db.add_all(prods_v1)
 
     # 2. Ferretería Industrial Cuyaya - Demo
@@ -177,6 +193,7 @@ def seed_demo_data_if_needed(db: Session) -> Workspace:
         estimate_delivery_fee_ars=Decimal("15000.00"),
         acopio_config_json={
             "enabled": True,
+            "price_basis": "LIST",
             "min_down_payment_pct": 80.0,
             "freeze_days": 45,
             "max_withdrawal_days": 90,
@@ -289,6 +306,9 @@ def seed_demo_data_if_needed(db: Session) -> Workspace:
             row_sha256=hashlib.sha256(b"CUY-PPR-34||cano polipropileno roscado 3/4 pulgada x 6 m").hexdigest(),
         ),
     ]
+    if is_postgres:
+        for p in prods_v2:
+            p.search_vector = func.to_tsvector("spanish", func.unaccent(p.normalized_description))
     db.add_all(prods_v2)
 
     # 3. Sanitarios y Materiales Palpalá - Demo
@@ -304,6 +324,7 @@ def seed_demo_data_if_needed(db: Session) -> Workspace:
         estimate_delivery_fee_ars=Decimal("12000.00"),
         acopio_config_json={
             "enabled": True,
+            "price_basis": "LIST",
             "min_down_payment_pct": 70.0,
             "freeze_days": 90,
             "max_withdrawal_days": 180,
@@ -415,7 +436,17 @@ def seed_demo_data_if_needed(db: Session) -> Workspace:
             row_sha256=hashlib.sha256(b"PAL-COR-34||cano corrugado electrico blanco 3/4 pulgada x 25 m").hexdigest(),
         ),
     ]
+    if is_postgres:
+        for p in prods_v3:
+            p.search_vector = func.to_tsvector("spanish", func.unaccent(p.normalized_description))
     db.add_all(prods_v3)
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.scalar(select(Workspace).where(Workspace.is_demo.is_(True)))
+        if existing:
+            return existing
+        raise
     return demo_ws

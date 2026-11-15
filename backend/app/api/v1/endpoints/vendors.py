@@ -147,7 +147,10 @@ def get_vendor_active_products(
         raise HTTPException(status_code=404, detail="Comercio no encontrado")
 
     active_pl = db.scalar(
-        select(PriceList).where(PriceList.vendor_id == vendor.id, PriceList.is_active.is_(True))
+        select(PriceList)
+        .where(PriceList.vendor_id == vendor.id, PriceList.is_active.is_(True))
+        .order_by(PriceList.version_number.desc(), PriceList.created_at.desc())
+        .limit(1)
     )
     if not active_pl:
         return []

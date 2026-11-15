@@ -2,15 +2,75 @@
 
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class _SubscriptableSchema(BaseModel):
+    """Permite acceso por atributo o subíndice dict-compatible sin relajar tipado Pydantic V2."""
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")
+
+    def __getitem__(self, key: str) -> Any:
+        if hasattr(self, key):
+            return getattr(self, key)
+        if self.__pydantic_extra__ and key in self.__pydantic_extra__:
+            return self.__pydantic_extra__[key]
+        raise KeyError(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def __contains__(self, key: object) -> bool:
+        if not isinstance(key, str):
+            return False
+        return hasattr(self, key) or bool(self.__pydantic_extra__ and key in self.__pydantic_extra__)
+
+
+class CandidateOptionSchema(_SubscriptableSchema):
+    vendor_product_id: str
+    sku: str
+    description: str
+    sale_unit: Optional[str] = None
+    score: Optional[float] = None
+    similarity_score: Optional[float] = None
+
+
+class OverrideAuditEntrySchema(_SubscriptableSchema):
+    timestamp: str
+    user_id: Optional[str] = None
+    user_email: Optional[str] = None
+    requisition_item_id: str
+    vendor_id: str
+    new_vendor_product_id: str
+    new_product_id: Optional[str] = None
+    discrepancies: List[str] = Field(default_factory=list)
+    forced_exception: bool = False
+    forced_override: bool = False
+    reason: str = ""
+
+
+class AcopioSummarySchema(_SubscriptableSchema):
+    enabled: bool = True
+    price_basis: Literal["LIST", "CASH"] = "LIST"
+    min_down_payment_pct: float
+    down_payment_ars: float
+    remaining_balance_ars: float
+    freeze_days: int
+    freeze_until_date: str
+    max_withdrawal_days: int
+    max_withdrawal_date: str
+    min_notice_hours: int
 
 
 class RunComparisonRequest(BaseModel):
     vendor_ids: List[uuid.UUID] = Field(
         min_length=1,
-        max_length=25,
-        description="Lista de IDs de comercios a compulsar (máximo 25)",
+        max_length=50,
+        description="Lista de IDs de comercios a compulsar (máximo 50)",
     )
     payment_modality: Literal["CASH", "LIST", "ACOPIO"] = Field(default="CASH")
     markup_pct: float = Field(default=0.0, ge=0.0, description="Margen del presupuestador")
@@ -53,7 +113,7 @@ class ComparisonVendorSummary(BaseModel):
     materials_subtotal_ars: float
     delivery_fee_ars: float
     total_with_delivery_ars: float
-    acopio_summary: Optional[Dict[str, Any]] = None
+    acopio_summary: Optional[AcopioSummarySchema] = None
 
 
 class ComparisonItemCell(BaseModel):
@@ -74,8 +134,8 @@ class ComparisonItemCell(BaseModel):
     similarity_score: Optional[float] = None
     is_best_price: bool = False
     is_selected_split: bool = False
-    candidate_options: List[Dict[str, Any]] = Field(default_factory=list)
-    override_audit: Optional[Dict[str, Any]] = None
+    candidate_options: List[CandidateOptionSchema] = Field(default_factory=list)
+    override_audit: Optional[OverrideAuditEntrySchema] = None
 
 
 class ComparisonItemRow(BaseModel):
@@ -135,7 +195,7 @@ class ComparisonMatrixResponse(BaseModel):
     matrix_rows: List[ComparisonItemRow]
     public_share_token: str
     snapshot_content_hash: Optional[str] = None
-    override_audit_log: List[Dict[str, Any]] = Field(default_factory=list)
+    override_audit_log: List[OverrideAuditEntrySchema] = Field(default_factory=list)
     is_locked: bool = False
     locked_at: Optional[datetime] = None
     created_at: datetime

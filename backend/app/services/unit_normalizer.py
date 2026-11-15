@@ -82,6 +82,10 @@ FAMILY_NOMINAL_INCH_TO_MM_MAP: Dict[str, Dict[str, List[float]]] = {
 
 MATERIAL_FAMILIES = ["caño", "cano", "tubo", "codo", "tee", "cupla", "union"]
 
+_PIPE_FAMILY_REGEX = re.compile(r"\b(canos?|tubos?|codos?|tees?|cuplas?|union(?:es)?)\b")
+
+_PRODUCT_NOUN_UNITS = {"cano", "canos", "ladrillo", "ladrillos"}
+
 KNOWN_MATERIALS = {
     "pvc": "PVC",
     "termofusion": "Termofusión",
@@ -207,11 +211,11 @@ class UnitNormalizerService:
 
     @classmethod
     def extract_quantity_and_unit(cls, text: str) -> Tuple[float, str, str]:
-        """Extrae la cantidad inicial, unidad y el texto remanente."""
+        """Extrae la cantidad inicial, unidad y el texto remanente sin consumir dimensiones."""
         clean_text = text.strip()
 
         m_thousand = re.match(
-            r"^(\d{1,3}(?:\.\d{3})+)(?:,(\d+))?\s*(barras?|bolsas?|caños?|canos?|unidades?|unids?|un|mts?|metros?|m|kg|kilos?|litros?|lts?|rollos?|ladrillos?)?\b\s*(.*)$",
+            r"^(\d{1,3}(?:\.\d{3})+)(?:,(\d+))?(?!\d|[.,]\d)(?!\s*(?:/\s*\d|\d+\s*/\s*\d|\"|''|mm\b|cm\b|pulg))\s*(?:(barras?|bolsas?|caños?|canos?|unidades?|unids?|un|mts?|metros?|m|kg|kilos?|litros?|lts?|rollos?|ladrillos?)\b\s*)?(.*)$",
             clean_text,
             re.IGNORECASE,
         )
@@ -222,10 +226,12 @@ class UnitNormalizerService:
             unit_raw = m_thousand.group(3) or "UN"
             rest = m_thousand.group(4) or ""
             unit_normalized = cls._normalize_unit_name(unit_raw)
+            if strip_accents(unit_raw).strip().lower() in _PRODUCT_NOUN_UNITS:
+                rest = f"{unit_raw} {rest}".strip()
             return qty, unit_normalized, rest.strip()
 
         match = re.match(
-            r"^(\d+(?:[.,]\d+)?)\s*(barras?|bolsas?|caños?|canos?|unidades?|unids?|un|mts?|metros?|m|kg|kilos?|litros?|lts?|rollos?|ladrillos?)?\b\s*(.*)$",
+            r"^(\d+(?:[.,]\d+)?)(?!\d|[.,]\d)(?!\s*(?:/\s*\d|\d+\s*/\s*\d|\"|''|mm\b|cm\b|pulg))\s*(?:(barras?|bolsas?|caños?|canos?|unidades?|unids?|un|mts?|metros?|m|kg|kilos?|litros?|lts?|rollos?|ladrillos?)\b\s*)?(.*)$",
             clean_text,
             re.IGNORECASE,
         )
@@ -235,6 +241,8 @@ class UnitNormalizerService:
             unit_raw = match.group(2) or "UN"
             rest = match.group(3) or ""
             unit_normalized = cls._normalize_unit_name(unit_raw)
+            if strip_accents(unit_raw).strip().lower() in _PRODUCT_NOUN_UNITS:
+                rest = f"{unit_raw} {rest}".strip()
             return qty, unit_normalized, rest.strip()
 
         return 1.0, "UN", clean_text
@@ -246,8 +254,8 @@ class UnitNormalizerService:
             return "BARRA"
         if "bolsa" in u:
             return "BOLSA"
-        if "caño" in u or "cano" in u:
-            return "UN"
+        if "cano" in u:
+            return "CAÑO"
         if u in {"m", "mt", "mts", "metro", "metros"}:
             return "M"
         if "kg" in u or "kilo" in u:
@@ -289,10 +297,18 @@ class UnitNormalizerService:
         return None
 
     @classmethod
-    def parse_single_line(cls, line: str, line_order: int = 1) -> NormalizedItemDraft:
+    def parse_single_line(
+        cls,
+        line: str,
+        line_order: int = 1,
+        is_catalog_description: bool = False,
+    ) -> NormalizedItemDraft:
         """Parsea y normaliza una línea individual hacia un NormalizedItemDraft."""
         raw_line = line.strip()
-        qty, unit, remaining = cls.extract_quantity_and_unit(raw_line)
+        if is_catalog_description:
+            qty, unit, remaining = 1.0, "UN", raw_line
+        else:
+            qty, unit, remaining = cls.extract_quantity_and_unit(raw_line)
         norm_text = strip_accents(raw_line)
         norm_remaining = strip_accents(remaining if remaining else raw_line)
 
@@ -303,26 +319,62 @@ class UnitNormalizerService:
         material_type: Optional[str] = None
         canonical_term = remaining if remaining else raw_line
 
+        re_len = re.compile(r"(?:\bx\b\s*)?(\d+(?:[.,]\d+)?)\s*(?:m|mts|metros)\b")
+
         # 1. Jerga regional de Acero / Hierros del NOA
-        VALID_REBAR_DIAMETERS = {4, 6, 8, 10, 12, 14, 16, 20, 25, 32}
-        if not any(w in norm_text for w in ("chapa", "perfil", "alambre", "cano", "caño", "tubo", "codo", "tee", "cupla")):
-            re_hierro = re.search(
-                r'\b(?:hierros?|barras?|acero)\s+(?:del?|de)?\s*(\d+)(?!\s*(?:/\s*\d|"|pulg))\b',
-                norm_text,
+        VALID_REBAR_DIAMETERS = {4, 4.2, 6, 8, 10, 12, 14, 16, 20, 25, 32}
+        steel_excluded = any(
+            w in norm_text
+            for w in (
+                "chapa",
+                "perfil",
+                "angulo",
+                "alambre",
+                "malla",
+                "clavo",
+                "cano",
+                "tubo",
+                "codo",
+                "tee",
+                "cupla",
+                "union",
             )
+        )
+        if not steel_excluded:
+            re_hierro = re.search(
+                r'\b(?:(?:barras?\s+(?:de\s+)?)?(?:hierros?|acero(?:\s+aletado)?)|barras?)\s*(?:aletad[oa]s?)?\s*(?:del?|de|ø|o|diametro)?\s*(\d+(?:[.,]\d+)?)\s*(?:mm)?(?!\s*(?:/\s*\d|"|pulg|m\b|mts\b|metros?\b|kg\b))\b',
+                norm_remaining if not is_catalog_description else norm_text,
+            )
+            if not re_hierro:
+                re_hierro = re.search(
+                    r'\b(?:(?:barras?\s+(?:de\s+)?)?(?:hierros?|acero(?:\s+aletado)?)|barras?)\s*(?:aletad[oa]s?)?\s*(?:del?|de|ø|o|diametro)?\s*(\d+(?:[.,]\d+)?)\s*(?:mm)?(?!\s*(?:/\s*\d|"|pulg|m\b|mts\b|metros?\b|kg\b))\b',
+                    norm_text,
+                )
             if re_hierro:
-                diam_val = float(re_hierro.group(1))
-                if int(diam_val) in VALID_REBAR_DIAMETERS:
+                diam_val = float(re_hierro.group(1).replace(",", "."))
+                if diam_val in VALID_REBAR_DIAMETERS or (diam_val.is_integer() and int(diam_val) in VALID_REBAR_DIAMETERS):
                     diameter_mm = diam_val
-                    length_m = 12.0 if unit != "M" else None
+                    m_len_steel = re_len.search(norm_remaining)
+                    if m_len_steel:
+                        parsed_len = float(m_len_steel.group(1).replace(",", "."))
+                        length_m = parsed_len if 0 < parsed_len <= 24.0 else (12.0 if unit not in ("M", "KG") else None)
+                    else:
+                        length_m = 12.0 if unit not in ("M", "KG") else None
                     material_type = "Acero"
-                    canonical_term = f"Barra acero aletado Ø {int(diam_val)} mm x 12 m"
+                    diam_label = int(diam_val) if diam_val.is_integer() else diam_val
+                    len_label = (
+                        f" x {int(length_m) if length_m.is_integer() else length_m} m"
+                        if length_m is not None
+                        else ""
+                    )
+                    canonical_term = f"Barra acero aletado Ø {diam_label} mm{len_label}"
+                    req_steel_unit = unit if unit in ("BARRA", "UN", "M", "KG") else "BARRA"
                     return NormalizedItemDraft(
                         line_order=line_order,
                         raw_line=raw_line,
                         requested_term=canonical_term,
                         quantity=qty,
-                        requested_unit="M" if unit == "M" else ("BARRA" if unit == "BARRA" else "UN"),
+                        requested_unit=req_steel_unit,
                         diameter_mm=diameter_mm,
                         length_m=length_m,
                         weight_kg=weight_kg,
@@ -331,8 +383,52 @@ class UnitNormalizerService:
                         is_confirmed=True,
                     )
 
-        # 2. Cemento / Bolsas
-        if "cemento" in norm_text:
+            # Si menciona barra/hierro estructural pero no especifica diámetro válido -> Bloqueo HITL (D-H4)
+            if not is_catalog_description and re.search(r"\b(barras?|hierros?|acero\s+aletado)\b", norm_text):
+                m_len_steel = re_len.search(norm_remaining)
+                length_m_missing = (
+                    float(m_len_steel.group(1).replace(",", "."))
+                    if m_len_steel and 0 < float(m_len_steel.group(1).replace(",", ".")) <= 24.0
+                    else (12.0 if unit not in ("M", "KG") else None)
+                )
+                inch_steel = cls.detect_fractional_inch(remaining if remaining else raw_line, material_type="Acero")
+                if inch_steel:
+                    d_in, d_mm = inch_steel
+                    return NormalizedItemDraft(
+                        line_order=line_order,
+                        raw_line=raw_line,
+                        requested_term=f'Barra acero aletado Ø {d_in}" ({d_mm} mm)',
+                        quantity=qty,
+                        requested_unit=unit if unit in ("BARRA", "UN", "M", "KG") else "BARRA",
+                        diameter_inch=d_in,
+                        diameter_mm=d_mm,
+                        length_m=length_m_missing,
+                        material_type="Acero",
+                        completeness="complete",
+                        is_confirmed=True,
+                    )
+                return NormalizedItemDraft(
+                    line_order=line_order,
+                    raw_line=raw_line,
+                    requested_term=remaining if remaining else raw_line,
+                    quantity=qty,
+                    requested_unit=unit if unit in ("BARRA", "UN", "M", "KG") else "BARRA",
+                    diameter_mm=None,
+                    length_m=length_m_missing,
+                    weight_kg=None,
+                    material_type="Acero",
+                    completeness="missing_critical_attribute",
+                    clarification_prompt=(
+                        "Falta especificar el diámetro de la barra de hierro/acero "
+                        "(ej: 6 mm, 8 mm, 10 mm, 12 mm). Confirmá la medida antes de cotizar."
+                    ),
+                    is_confirmed=False,
+                )
+
+        # 2. Cemento / Bolsas (excluye cemento de albañilería y pegamentos/adhesivos)
+        if re.search(r"\bcemento\b", norm_text) and not any(
+            x in norm_text for x in ("albanileria", "contacto", "pegamento", "adhesivo", "cola")
+        ):
             material_type = "Cemento"
             re_peso = re.search(r"\b(\d+)\s*kg\b", norm_remaining)
             if re_peso:
@@ -379,15 +475,15 @@ class UnitNormalizerService:
                 diameter_inch, diameter_mm = inch_res
 
         # 5. Detección de Longitud comercial en metros (buscada solo en el remanente para no confundir con qty en metros)
-        re_len = re.search(r"(?:\bx\b\s*)?(\d+(?:[.,]\d+)?)\s*(?:m|mts|metros)\b", norm_remaining)
-        if re_len:
-            length_m = float(re_len.group(1).replace(",", "."))
-        elif ("caño" in norm_text or "cano" in norm_text) and material_type == "PVC" and unit != "M":
+        m_len = re_len.search(norm_remaining)
+        if m_len:
+            length_m = float(m_len.group(1).replace(",", "."))
+        elif re.search(r"\bcanos?\b", norm_text) and material_type == "PVC" and unit != "M":
             length_m = 4.0
 
-        # 6. Detección de familias críticas que exigen material y diámetro
-        is_critical_family = any(fam in norm_text for fam in MATERIAL_FAMILIES)
-        if is_critical_family:
+        # 6. Detección de familias críticas que exigen material y diámetro (con límite de palabra)
+        family_match = _PIPE_FAMILY_REGEX.search(norm_text)
+        if family_match:
             missing_material = not material_type
             missing_dimension = diameter_mm is None
 
@@ -398,6 +494,20 @@ class UnitNormalizerService:
                     else (f"Ø {diameter_mm} mm" if diameter_mm else "")
                 )
 
+                raw_piece = family_match.group(1).lower()
+                if raw_piece.startswith("tubo"):
+                    piece_label = "Tubo"
+                elif raw_piece.startswith("codo"):
+                    piece_label = "Codo"
+                elif raw_piece.startswith("tee"):
+                    piece_label = "Tee"
+                elif raw_piece.startswith("cupla"):
+                    piece_label = "Cupla"
+                elif raw_piece.startswith("union"):
+                    piece_label = "Unión"
+                else:
+                    piece_label = "Caño"
+
                 if missing_material and missing_dimension:
                     clarification_prompt = (
                         "Especificar diámetro y material del caño/accesorio: "
@@ -405,20 +515,20 @@ class UnitNormalizerService:
                     )
                 elif missing_material:
                     clarification_prompt = (
-                        f"Especificar material/uso del caño/accesorio {dim_desc}: "
+                        f"Especificar material/uso del {piece_label.lower()}/accesorio {dim_desc}: "
                         f"¿PVC cloacal/agua, Polipropileno roscado, Termofusión (agua/gas) o Corrugado eléctrico?"
                     ).strip()
                 else:
                     clarification_prompt = (
-                        f"Especificar diámetro del {material_type}: "
+                        f"Especificar diámetro del {piece_label.lower()} {material_type}: "
                         f"¿40 mm, 50 mm, 63 mm, 110 mm o fracción de pulgada (1/2, 3/4, 1)?"
                     )
 
-                req_term = f"Caño {material_type or ''} {dim_desc}".strip()
+                req_term = f"{piece_label} {material_type or ''} {dim_desc}".strip()
                 return NormalizedItemDraft(
                     line_order=line_order,
                     raw_line=raw_line,
-                    requested_term=req_term or "Caño",
+                    requested_term=req_term or piece_label,
                     quantity=qty,
                     requested_unit=unit,
                     diameter_inch=diameter_inch,

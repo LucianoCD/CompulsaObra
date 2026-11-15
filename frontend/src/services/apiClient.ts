@@ -72,6 +72,37 @@ class ApiClient {
     return headers;
   }
 
+  private async extractErrorMessage(response: Response, fallbackPrefix?: string): Promise<string> {
+    let errorMessage = fallbackPrefix
+      ? `${fallbackPrefix} (HTTP ${response.status})`
+      : `Error HTTP ${response.status}: ${response.statusText}`;
+    try {
+      const errorJson = await response.json();
+      if (errorJson?.error?.message) {
+        errorMessage = errorJson.error.message;
+      } else if (errorJson?.detail) {
+        if (typeof errorJson.detail === 'string') {
+          errorMessage = errorJson.detail;
+        } else if (Array.isArray(errorJson.detail)) {
+          errorMessage = errorJson.detail
+            .map((item: unknown) => {
+              if (typeof item === 'string') return item;
+              if (item && typeof item === 'object' && 'msg' in item) {
+                return String((item as { msg?: unknown }).msg);
+              }
+              return JSON.stringify(item);
+            })
+            .join('; ');
+        } else {
+          errorMessage = JSON.stringify(errorJson.detail);
+        }
+      }
+    } catch {
+      // Fallback a statusText o prefijo
+    }
+    return errorMessage;
+  }
+
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const method = (options.method || 'GET').toUpperCase();
     const headers = this.getHeaders(
@@ -87,21 +118,7 @@ class ApiClient {
     });
 
     if (!response.ok) {
-      let errorMessage = `Error HTTP ${response.status}: ${response.statusText}`;
-      try {
-        const errorJson = await response.json();
-        if (errorJson?.error?.message) {
-          errorMessage = errorJson.error.message;
-        } else if (errorJson?.detail) {
-          errorMessage =
-            typeof errorJson.detail === 'string'
-              ? errorJson.detail
-              : JSON.stringify(errorJson.detail);
-        }
-      } catch {
-        // Fallback a statusText
-      }
-      throw new Error(errorMessage);
+      throw new Error(await this.extractErrorMessage(response));
     }
 
     return response.json() as Promise<T>;
@@ -219,8 +236,7 @@ class ApiClient {
     });
 
     if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error(err?.error?.message || err?.detail || 'Error al importar catálogo');
+      throw new Error(await this.extractErrorMessage(response, 'Error al importar catálogo'));
     }
 
     return response.json();
@@ -243,8 +259,7 @@ class ApiClient {
     });
 
     if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error(err?.error?.message || err?.detail || 'Error al procesar el pedido');
+      throw new Error(await this.extractErrorMessage(response, 'Error al procesar el pedido'));
     }
 
     return response.json();
@@ -331,7 +346,7 @@ class ApiClient {
     if (singleVendorId) {
       params.set('single_vendor_id', singleVendorId);
     }
-    return `${BASE_URL}/comparisons/${runId}/pdf?${params.toString()}`;
+    return `${BASE_URL}/comparisons/${encodeURIComponent(runId)}/pdf?${params.toString()}`;
   }
 
   public async downloadPdfBlob(
@@ -347,14 +362,7 @@ class ApiClient {
       headers: this.getHeaders('GET'),
     });
     if (!response.ok) {
-      let detail = `Error HTTP ${response.status} al descargar PDF`;
-      try {
-        const errJson = await response.json();
-        detail = errJson?.detail || errJson?.error?.message || detail;
-      } catch {
-        // Sin cuerpo JSON
-      }
-      throw new Error(detail);
+      throw new Error(await this.extractErrorMessage(response, 'Error al descargar PDF'));
     }
     return response.blob();
   }

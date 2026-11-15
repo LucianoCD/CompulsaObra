@@ -128,7 +128,6 @@ class EmailService:
         msg["Subject"] = record.subject
         msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
         msg["To"] = record.recipient
-        msg["X-Compulsa-Token"] = record.verification_token
 
         text_body = (
             f"Hola,\n\n"

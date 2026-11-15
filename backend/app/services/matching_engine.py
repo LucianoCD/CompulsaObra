@@ -1,6 +1,7 @@
 """Motor de emparejamiento físico-léxico multi-catálogo con Cero Sustitución Ciega."""
 
 import math
+import re
 import uuid
 from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP
@@ -11,7 +12,11 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import AmbiguousItemCannotBeMatchedError
 from app.models.requisition import RequisitionItem
 from app.models.vendor import PriceList, ProductAlias, Vendor, VendorProduct
-from app.services.unit_normalizer import UnitNormalizerService, strip_accents
+from app.services.unit_normalizer import (
+    UnitNormalizerService,
+    normalize_material_label,
+    strip_accents,
+)
 
 MIN_SIMILARITY_THRESHOLD = 0.20
 MIN_AUTO_CONFIDENCE = 0.30
@@ -63,17 +68,19 @@ class VendorItemMatchResult:
 
 
 def compute_string_similarity(s1: str, s2: str) -> float:
-    """Calcula similitud de Jaccard y trigramas determinista entre dos cadenas."""
-    w1 = set(strip_accents(s1).lower().split())
-    w2 = set(strip_accents(s2).lower().split())
+    """Calcula similitud de Jaccard y trigramas determinista entre dos cadenas normalizadas."""
+    s1_norm = strip_accents(s1).lower().strip()
+    s2_norm = strip_accents(s2).lower().strip()
+    w1 = set(s1_norm.split())
+    w2 = set(s2_norm.split())
     if not w1 or not w2:
         return 0.0
     intersection = w1.intersection(w2)
     union = w1.union(w2)
     word_jaccard = len(intersection) / len(union)
 
-    t1 = {s1[i : i + 3] for i in range(len(s1) - 2)} if len(s1) >= 3 else {s1}
-    t2 = {s2[i : i + 3] for i in range(len(s2) - 2)} if len(s2) >= 3 else {s2}
+    t1 = {s1_norm[i : i + 3] for i in range(len(s1_norm) - 2)} if len(s1_norm) >= 3 else {s1_norm}
+    t2 = {s2_norm[i : i + 3] for i in range(len(s2_norm) - 2)} if len(s2_norm) >= 3 else {s2_norm}
     trigram_sim = len(t1.intersection(t2)) / len(t1.union(t2)) if t1 and t2 else 0.0
 
     return round(0.6 * word_jaccard + 0.4 * trigram_sim, 4)
@@ -204,42 +211,72 @@ class MatchingEngineService:
         item: RequisitionItem,
         vendor_id: uuid.UUID,
         payment_modality: str = "CASH",
+        vendor: Optional[Vendor] = None,
+        active_price_list: Optional[PriceList] = None,
+        preloaded_aliases: Optional[List[ProductAlias]] = None,
+        preloaded_vendor_products: Optional[List[VendorProduct]] = None,
     ) -> VendorItemMatchResult:
         """Empareja un ítem del pedido contra el catálogo activo de un comercio."""
-        vendor = db.scalar(select(Vendor).where(Vendor.id == vendor_id))
-        if item.completeness == "missing_critical_attribute":
+        if item.completeness == "missing_critical_attribute" or not item.is_confirmed:
             raise AmbiguousItemCannotBeMatchedError(
                 item_id=str(item.id),
                 message=item.clarification_prompt or "El ítem requiere aclaración técnica previa al emparejamiento.",
             )
 
+        if vendor is None:
+            vendor = db.scalar(select(Vendor).where(Vendor.id == vendor_id))
+
+        req_term_lower = item.requested_term.strip().lower()
+        raw_line_lower = item.raw_line.strip().lower()
+
         # 2. Memoria de Alias Supervisado en el Workspace (H-11: exacto por ID o por término canónico aprendido)
-        alias = db.scalar(
-            select(ProductAlias)
-            .where(
-                ProductAlias.workspace_id == workspace_id,
-                or_(ProductAlias.vendor_id == vendor_id, ProductAlias.vendor_id.is_(None)),
-                or_(
-                    ProductAlias.alias_term == item.requested_term,
-                    ProductAlias.alias_term == item.raw_line.strip(),
-                    func.lower(ProductAlias.alias_term) == item.requested_term.strip().lower(),
-                    func.lower(ProductAlias.alias_term) == item.raw_line.strip().lower(),
-                ),
-                ProductAlias.is_active.is_(True),
+        alias: Optional[ProductAlias] = None
+        if preloaded_aliases is not None:
+            matching_aliases = [
+                a
+                for a in preloaded_aliases
+                if a.workspace_id == workspace_id
+                and a.is_active
+                and (a.vendor_id == vendor_id or a.vendor_id is None)
+                and a.alias_term.strip().lower() in (req_term_lower, raw_line_lower)
+            ]
+            if matching_aliases:
+                matching_aliases.sort(key=lambda a: 0 if a.vendor_id == vendor_id else 1)
+                alias = matching_aliases[0]
+        else:
+            alias = db.scalar(
+                select(ProductAlias)
+                .where(
+                    ProductAlias.workspace_id == workspace_id,
+                    or_(ProductAlias.vendor_id == vendor_id, ProductAlias.vendor_id.is_(None)),
+                    or_(
+                        ProductAlias.alias_term == item.requested_term,
+                        ProductAlias.alias_term == item.raw_line.strip(),
+                        func.lower(ProductAlias.alias_term) == req_term_lower,
+                        func.lower(ProductAlias.alias_term) == raw_line_lower,
+                    ),
+                    ProductAlias.is_active.is_(True),
+                )
+                .order_by(ProductAlias.vendor_id.desc().nullslast())
             )
-            .order_by(ProductAlias.vendor_id.desc().nullslast())
-        )
 
         if alias and alias.target_vendor_product_id:
-            target_prod = db.scalar(
-                select(VendorProduct)
-                .join(PriceList, VendorProduct.price_list_id == PriceList.id)
-                .where(
-                    VendorProduct.id == alias.target_vendor_product_id,
-                    VendorProduct.vendor_id == vendor_id,
-                    PriceList.is_active.is_(True),
+            target_prod: Optional[VendorProduct] = None
+            if preloaded_vendor_products is not None:
+                for p in preloaded_vendor_products:
+                    if p.id == alias.target_vendor_product_id and p.vendor_id == vendor_id:
+                        target_prod = p
+                        break
+            else:
+                target_prod = db.scalar(
+                    select(VendorProduct)
+                    .join(PriceList, VendorProduct.price_list_id == PriceList.id)
+                    .where(
+                        VendorProduct.id == alias.target_vendor_product_id,
+                        VendorProduct.vendor_id == vendor_id,
+                        PriceList.is_active.is_(True),
+                    )
                 )
-            )
             if target_prod and cls._satisfies_physical_constraints(item, target_prod):
                 comm_qty, _, conv_note, is_safe = cls.calculate_commercial_quantity(item, target_prod)
                 if not is_safe:
@@ -258,6 +295,8 @@ class MatchingEngineService:
                             "sku": target_prod.sku,
                             "description": target_prod.raw_description,
                             "sale_unit": target_prod.sale_unit,
+                            "score": 1.0,
+                            "similarity_score": 1.0,
                         }],
                     )
                 price = cls.resolve_effective_unit_price(target_prod, vendor, payment_modality)
@@ -275,13 +314,14 @@ class MatchingEngineService:
                 )
 
         # 3. Consulta con Filtro Dimensional Duro SQL sobre la lista activa
-        active_price_list = db.scalar(
-            select(PriceList)
-            .where(PriceList.vendor_id == vendor_id, PriceList.is_active.is_(True))
-            .order_by(PriceList.version_number.desc())
-        )
+        if active_price_list is None and preloaded_vendor_products is None:
+            active_price_list = db.scalar(
+                select(PriceList)
+                .where(PriceList.vendor_id == vendor_id, PriceList.is_active.is_(True))
+                .order_by(PriceList.version_number.desc())
+            )
 
-        if not active_price_list:
+        if active_price_list is None:
             return VendorItemMatchResult(
                 match_status="NOT_CARRIED",
                 vendor_product_id=None,
@@ -292,53 +332,77 @@ class MatchingEngineService:
                 match_origin="NO_ACTIVE_CATALOG",
             )
 
-        conditions = [
-            VendorProduct.price_list_id == active_price_list.id,
-            VendorProduct.vendor_id == vendor_id,
-        ]
-
-        if item.diameter_mm is not None:
-            allowed_diameters = UnitNormalizerService.get_equivalent_diameters_mm(
-                diameter_mm=float(item.diameter_mm),
-                material_type=item.material_type,
-                diameter_inch=item.diameter_inch,
-            )
-            conditions.append(VendorProduct.diameter_mm.is_not(None))
-            conditions.append(
-                or_(*[
-                    func.abs(VendorProduct.diameter_mm - Decimal(str(d))) <= Decimal("0.5")
-                    for d in allowed_diameters
-                ])
-            )
-
-        # Cuando el usuario pide en metros lineales ('M'), permitir presentaciones en rollo/barra/caño
-        req_unit_norm = _normalize_commercial_unit(item.requested_unit)
-        if item.length_m is not None and req_unit_norm != "M":
-            conditions.append(VendorProduct.length_m.is_not(None))
-            conditions.append(func.abs(VendorProduct.length_m - item.length_m) <= Decimal("0.05"))
-
-        if item.weight_kg is not None and req_unit_norm != "KG":
-            conditions.append(VendorProduct.weight_kg.is_not(None))
-            conditions.append(func.abs(VendorProduct.weight_kg - item.weight_kg) <= Decimal("0.5"))
-
-        if item.material_type is not None:
-            mat_raw = item.material_type.strip()
-            mat_clean = strip_accents(mat_raw).lower()
-            mat_variants = [mat_raw.lower(), mat_clean]
-            if "termofus" in mat_clean or "termo fus" in mat_clean:
-                mat_variants.extend(["termofusion", "termofusión", "termo fusion", "termo fusión"])
-            elif "acero" in mat_clean or "hierro" in mat_clean:
-                mat_variants.extend(["acero", "hierro"])
-            elif "pvc" in mat_clean:
-                mat_variants.append("pvc")
-
-            mat_predicates = [
-                func.lower(func.coalesce(VendorProduct.material_type, VendorProduct.normalized_description)).contains(v)
-                for v in set(mat_variants)
+        if preloaded_vendor_products is not None:
+            candidates = [
+                prod
+                for prod in preloaded_vendor_products
+                if prod.vendor_id == vendor_id and cls._satisfies_physical_constraints(item, prod)
             ]
-            conditions.append(or_(*mat_predicates))
+        else:
+            assert active_price_list is not None
+            conditions = [
+                VendorProduct.price_list_id == active_price_list.id,
+                VendorProduct.vendor_id == vendor_id,
+            ]
 
-        candidates = db.scalars(select(VendorProduct).where(and_(*conditions))).all()
+            if item.diameter_mm is not None:
+                allowed_diameters = UnitNormalizerService.get_equivalent_diameters_mm(
+                    diameter_mm=float(item.diameter_mm),
+                    material_type=item.material_type,
+                    diameter_inch=item.diameter_inch,
+                )
+                conditions.append(VendorProduct.diameter_mm.is_not(None))
+                conditions.append(
+                    or_(*[
+                        func.abs(VendorProduct.diameter_mm - Decimal(str(d))) <= Decimal("0.5")
+                        for d in allowed_diameters
+                    ])
+                )
+
+            # Cuando el usuario pide en metros lineales ('M'), permitir presentaciones en rollo/barra/caño
+            req_unit_norm = _normalize_commercial_unit(item.requested_unit)
+            if item.length_m is not None and req_unit_norm != "M":
+                conditions.append(VendorProduct.length_m.is_not(None))
+                conditions.append(func.abs(VendorProduct.length_m - item.length_m) <= Decimal("0.05"))
+
+            if item.weight_kg is not None and req_unit_norm != "KG":
+                conditions.append(VendorProduct.weight_kg.is_not(None))
+                conditions.append(func.abs(VendorProduct.weight_kg - item.weight_kg) <= Decimal("0.5"))
+
+            if item.material_type is not None:
+                mat_raw = item.material_type.strip()
+                mat_clean = strip_accents(mat_raw).lower()
+                mat_variants = [mat_raw.lower(), mat_clean]
+                if "termofus" in mat_clean or "termo fus" in mat_clean:
+                    mat_variants.extend(["termofusion", "termofusión", "termo fusion", "termo fusión"])
+                elif "acero" in mat_clean or "hierro" in mat_clean:
+                    mat_variants.extend(["acero", "hierro"])
+                elif "pvc" in mat_clean:
+                    mat_variants.append("pvc")
+
+                mat_predicates = [
+                    func.lower(func.coalesce(VendorProduct.material_type, VendorProduct.normalized_description)).contains(v)
+                    for v in set(mat_variants)
+                ]
+                conditions.append(or_(*mat_predicates))
+
+            stmt = select(VendorProduct).where(and_(*conditions))
+            bind = db.get_bind()
+            if bind is not None and bind.dialect.name == "postgresql":
+                query_text = strip_accents(item.requested_term).lower().strip()
+                if query_text:
+                    ts_rank = func.ts_rank_cd(
+                        func.coalesce(
+                            VendorProduct.search_vector,
+                            func.to_tsvector("spanish", VendorProduct.normalized_description),
+                        ),
+                        func.plainto_tsquery("spanish", query_text),
+                    )
+                    trgm_sim = func.similarity(VendorProduct.normalized_description, query_text)
+                    stmt = stmt.order_by((ts_rank + trgm_sim).desc())
+
+            raw_candidates = db.scalars(stmt).all()
+            candidates = [c for c in raw_candidates if cls._satisfies_physical_constraints(item, c)]
 
         # 4. Invariante: Cero Sustitución Ciega
         if not candidates:
@@ -374,10 +438,10 @@ class MatchingEngineService:
                 for t in search_terms
             )
             if cand.brand and any(strip_accents(cand.brand).lower() in t for t in search_terms):
-                best_term_score += 0.25
+                best_term_score = min(1.0, best_term_score + 0.25)
             if has_canonical_alias and best_term_score >= MIN_SIMILARITY_THRESHOLD:
                 best_term_score = min(1.0, best_term_score + 0.15)
-            scored_candidates.append((round(best_term_score, 4), cand))
+            scored_candidates.append((round(min(1.0, best_term_score), 4), cand))
 
         scored_candidates.sort(key=lambda x: x[0], reverse=True)
 
@@ -412,7 +476,10 @@ class MatchingEngineService:
         is_close_tie = False
         if len(in_stock_candidates) >= 2:
             second_score, second_product = in_stock_candidates[1]
-            if best_score < 0.95 and (best_score - second_score) < MIN_TOP_CANDIDATE_GAP:
+            if best_product.id != second_product.id and (
+                (best_score < 1.0 and (best_score - second_score) < MIN_TOP_CANDIDATE_GAP)
+                or (best_score == 1.0 and second_score == 1.0)
+            ):
                 is_close_tie = True
 
         if best_score < MIN_AUTO_CONFIDENCE or is_close_tie:
@@ -431,6 +498,7 @@ class MatchingEngineService:
                         "description": prod.raw_description,
                         "sale_unit": prod.sale_unit,
                         "score": score,
+                        "similarity_score": score,
                     }
                     for score, prod in in_stock_candidates[:5]
                 ],
@@ -456,6 +524,7 @@ class MatchingEngineService:
                         "description": best_product.raw_description,
                         "sale_unit": best_product.sale_unit,
                         "score": best_score,
+                        "similarity_score": best_score,
                     }
                 ],
             )
@@ -496,11 +565,25 @@ class MatchingEngineService:
         if item.weight_kg is not None and req_unit_norm != "KG":
             if prod.weight_kg is None or abs(float(prod.weight_kg) - float(item.weight_kg)) > 0.5:
                 return False
-        if item.material_type is not None and prod.material_type:
-            p_mat = strip_accents(prod.material_type).lower()
-            i_mat = strip_accents(item.material_type).lower()
-            if ("hierro" in p_mat or "acero" in p_mat) and ("hierro" in i_mat or "acero" in i_mat):
-                pass
-            elif p_mat != i_mat and not (p_mat in i_mat or i_mat in p_mat):
-                return False
+        if item.material_type is not None:
+            i_label = normalize_material_label(item.material_type)
+            if prod.material_type:
+                p_label = normalize_material_label(prod.material_type)
+                if p_label != i_label:
+                    p_mat = strip_accents(prod.material_type).lower()
+                    i_mat = strip_accents(item.material_type).lower()
+                    if not (re.search(rf"\b{re.escape(i_mat)}\b", p_mat) or re.search(rf"\b{re.escape(p_mat)}\b", i_mat)):
+                        return False
+            else:
+                i_mat = strip_accents(item.material_type).lower()
+                variants = {i_mat}
+                if i_label == "Acero":
+                    variants.update({"acero", "hierro"})
+                elif i_label == "Termofusión":
+                    variants.update({"termofusion", "termo fusion"})
+                elif i_label:
+                    variants.add(strip_accents(i_label).lower())
+                desc_norm = strip_accents(prod.normalized_description or "").lower()
+                if not any(re.search(rf"\b{re.escape(v)}\b", desc_norm) for v in variants if v):
+                    return False
         return True

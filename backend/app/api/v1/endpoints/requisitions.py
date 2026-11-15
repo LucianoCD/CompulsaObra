@@ -156,10 +156,10 @@ def _create_requisition_from_drafts(
 
 @router.post("/ingest", response_model=RequisitionDetailResponse, status_code=status.HTTP_201_CREATED)
 async def ingest_requisition(
-    title: str = Form(default="Pedido de Materiales"),
-    client_name: Optional[str] = Form(default=None),
-    raw_text: Optional[str] = Form(default=None),
-    preset_id: Optional[str] = Form(default=None),
+    title: str = Form(default="Pedido de Materiales", min_length=2, max_length=160),
+    client_name: Optional[str] = Form(default=None, max_length=140),
+    raw_text: Optional[str] = Form(default=None, max_length=50000),
+    preset_id: Optional[str] = Form(default=None, max_length=60),
     image_file: Optional[UploadFile] = File(default=None),
     current_ws: Workspace = Depends(get_current_workspace),
     db: Session = Depends(get_db),
@@ -188,12 +188,15 @@ async def ingest_requisition(
         )
 
     # Procesar con el servicio extractor
-    draft_items = extractor.extract_requisition_items(
-        raw_text=raw_text,
-        image_bytes=image_bytes,
-        preset_id=preset_id,
-        mime_type=mime_type,
-    )
+    try:
+        draft_items = extractor.extract_requisition_items(
+            raw_text=raw_text,
+            image_bytes=image_bytes,
+            preset_id=preset_id,
+            mime_type=mime_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     if not draft_items:
         raise HTTPException(
@@ -220,10 +223,13 @@ def ingest_requisition_json(
     db: Session = Depends(get_db),
 ):
     """Variante JSON directa para ingesta de texto o presets."""
-    draft_items = extractor.extract_requisition_items(
-        raw_text=payload.raw_text,
-        preset_id=payload.preset_id,
-    )
+    try:
+        draft_items = extractor.extract_requisition_items(
+            raw_text=payload.raw_text,
+            preset_id=payload.preset_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     if not draft_items:
         raise HTTPException(
@@ -292,6 +298,7 @@ def resolve_item_ambiguity(
         .where(
             Requisition.id == req_id, Requisition.workspace_id == current_ws.id
         )
+        .with_for_update()
     )
     if not req:
         raise HTTPException(status_code=404, detail="Requisición no encontrada")
@@ -341,7 +348,7 @@ def resolve_item_ambiguity(
     provided_updates = payload.model_dump(exclude_unset=True)
     if not item.is_confirmed and not provided_updates:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422),
             detail="Debe suministrar al menos un atributo técnico (como material constructivo o diámetro) para resolver la ambigüedad del ítem.",
         )
 
@@ -374,15 +381,18 @@ def resolve_item_ambiguity(
     if is_critical_fam:
         if not item.material_type or item.diameter_mm is None or float(item.diameter_mm) <= 0:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422),
                 detail="No se puede confirmar el ítem: debe especificar obligatoriamente el material constructivo y el diámetro físico.",
             )
 
-    is_steel_fam = any(s in norm_context for s in ["barra", "hierro", "acero", "malla", "alambre"])
+    is_steel_fam = (
+        item.material_type == "Acero"
+        or any(s in norm_context for s in ["barra", "hierro", "acero", "malla", "alambre"])
+    ) and not any(excl in norm_context for excl in ["chapa", "perfil", "cano", "tubo", "fardo"])
     if is_steel_fam:
         if item.diameter_mm is None or float(item.diameter_mm) <= 0:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422),
                 detail="No se puede confirmar el ítem: debe especificar obligatoriamente el diámetro nominal de la barra o hierro.",
             )
 
@@ -396,12 +406,26 @@ def resolve_item_ambiguity(
 
     # Si solicitó guardar como alias supervisado en el workspace (H-11: vincula producto real si existe y guarda canonical_term)
     if payload.save_as_alias:
+        from sqlalchemy import or_ as sql_or
+
+        if payload.vendor_id:
+            target_vendor = db.scalar(
+                select(Vendor).where(
+                    Vendor.id == payload.vendor_id,
+                    sql_or(Vendor.workspace_id == current_ws.id, Vendor.is_public_directory.is_(True)),
+                )
+            )
+            if not target_vendor:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Comercio especificado no encontrado o inaccesible para guardar el alias.",
+                )
+
         alias_term = item.requested_term.strip()
         raw_term = item.raw_line.strip()
         target_prod_id: Optional[uuid.UUID] = None
 
         # Buscar producto compatible en el comercio especificado (o catálogo accesible) para enlazar target_vendor_product_id
-        from sqlalchemy import or_ as sql_or
         vp_stmt = (
             select(VendorProduct)
             .join(PriceList, VendorProduct.price_list_id == PriceList.id)
@@ -426,7 +450,9 @@ def resolve_item_ambiguity(
         if len(matching_vps) == 1:
             target_prod_id = matching_vps[0].id
 
-        for term_to_save in {alias_term, raw_term}:
+        canonical_truncated = item.requested_term[:200]
+        terms_to_save = {t[:180] for t in (alias_term, raw_term) if t}
+        for term_to_save in terms_to_save:
             existing_alias = db.scalar(
                 select(ProductAlias).where(
                     ProductAlias.workspace_id == current_ws.id,
@@ -435,7 +461,7 @@ def resolve_item_ambiguity(
                 )
             )
             if existing_alias:
-                existing_alias.canonical_term = item.requested_term
+                existing_alias.canonical_term = canonical_truncated
                 if target_prod_id is not None:
                     existing_alias.target_vendor_product_id = target_prod_id
                 existing_alias.is_active = True
@@ -446,7 +472,7 @@ def resolve_item_ambiguity(
                         workspace_id=current_ws.id,
                         vendor_id=payload.vendor_id,
                         alias_term=term_to_save,
-                        canonical_term=item.requested_term,
+                        canonical_term=canonical_truncated,
                         target_vendor_product_id=target_prod_id,
                         is_active=True,
                     )

@@ -56,7 +56,7 @@ async def domain_exception_handler(request: Request, exc: CompulsaDomainExceptio
     elif isinstance(exc, LockedBudgetModificationError):
         status_code = status.HTTP_409_CONFLICT
     elif isinstance(exc, (DimensionMismatchOverrideError, AmbiguousItemCannotBeMatchedError)):
-        status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+        status_code = getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422)
     elif isinstance(exc, MultimodalExtractionUnavailableError):
         status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 

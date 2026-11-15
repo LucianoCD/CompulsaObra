@@ -110,7 +110,7 @@ export const TractionEvidencePage: React.FC<TractionEvidencePageProps> = ({ onNa
           <button
             type="button"
             onClick={() => void loadMetrics()}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-control bg-action-primary hover:bg-action-hover text-white text-[13px] font-bold transition min-h-[42px]"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-control bg-action-primary hover:bg-action-hover text-action-primaryFg text-[13px] font-bold transition min-h-[42px]"
           >
             <RefreshCw className="w-4 h-4" />
             <span>Reintentar</span>

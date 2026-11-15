@@ -37,23 +37,33 @@ export const PublicBudgetViewPage: React.FC<PublicBudgetViewPageProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     async function loadSnapshot() {
       try {
         setLoading(true);
         setError(null);
         const res = await apiClient.getPublicComparison(shareToken);
-        setData(res);
+        if (!cancelled) {
+          setData(res);
+        }
       } catch (err: unknown) {
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Presupuesto no encontrado, sin confirmar o enlace caducado.'
-        );
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : 'Presupuesto no encontrado, sin confirmar o enlace caducado.'
+          );
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
     void loadSnapshot();
+    return () => {
+      cancelled = true;
+    };
   }, [shareToken]);
 
   const handleHomeNav = (e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -192,10 +202,10 @@ export const PublicBudgetViewPage: React.FC<PublicBudgetViewPageProps> = ({
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <a
-              href={`/api/v1/public/comparisons/${shareToken}?format=pdf&mode=client_budget`}
+              href={`/api/v1/public/comparisons/${encodeURIComponent(shareToken)}?format=pdf&mode=client_budget`}
               target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-control bg-action-primary hover:bg-action-hover text-white font-bold text-[13px] shadow-card transition min-h-[42px]"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-control bg-action-primary hover:bg-action-hover text-action-primaryFg font-bold text-[13px] shadow-card transition min-h-[42px]"
             >
               <FileText className="w-4 h-4" />
               <span>Descargar Presupuesto Oficial PDF</span>

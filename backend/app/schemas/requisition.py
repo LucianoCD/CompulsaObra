@@ -10,16 +10,16 @@ from app.schemas.dimensions import NormalizedItemDraft
 class RequisitionIngestRequest(BaseModel):
     title: str = Field(default="Pedido de Materiales", min_length=2, max_length=160)
     client_name: Optional[str] = Field(default=None, max_length=140)
-    raw_text: Optional[str] = None
-    preset_id: Optional[str] = None
+    raw_text: Optional[str] = Field(default=None, max_length=50000)
+    preset_id: Optional[str] = Field(default=None, max_length=60)
 
 
 class ItemClarificationResolveRequest(BaseModel):
-    diameter_mm: Optional[float] = None
-    length_m: Optional[float] = None
-    weight_kg: Optional[float] = None
-    material_type: Optional[str] = None
-    confirmed_term: Optional[str] = None
+    diameter_mm: Optional[float] = Field(default=None, gt=0, le=10000)
+    length_m: Optional[float] = Field(default=None, gt=0, le=1000)
+    weight_kg: Optional[float] = Field(default=None, gt=0, le=100000)
+    material_type: Optional[str] = Field(default=None, min_length=1, max_length=60)
+    confirmed_term: Optional[str] = Field(default=None, min_length=1, max_length=200)
     quantity: Optional[float] = Field(default=None, gt=0)
     requested_unit: Optional[str] = Field(default=None, min_length=1, max_length=24)
     save_as_alias: bool = False

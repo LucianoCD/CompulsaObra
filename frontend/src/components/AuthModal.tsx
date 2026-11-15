@@ -210,7 +210,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     placeholder="Ej. Ing. Juan Pérez"
-                    className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 text-[13px] text-content-primary focus:outline-none focus:border-surface-strong"
+                    className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 text-[13px] text-content-primary focus:border-surface-strong"
                   />
                 </div>
               </div>
@@ -230,7 +230,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                     value={workspaceName}
                     onChange={(e) => setWorkspaceName(e.target.value)}
                     placeholder="Ej. Pérez & Asoc. Construcciones"
-                    className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 text-[13px] text-content-primary focus:outline-none focus:border-surface-strong"
+                    className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 text-[13px] text-content-primary focus:border-surface-strong"
                   />
                 </div>
               </div>
@@ -253,7 +253,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="juan@constructora.com"
-                className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 text-[13px] text-content-primary focus:outline-none focus:border-surface-strong font-mono"
+                className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 text-[13px] text-content-primary focus:border-surface-strong font-mono"
               />
             </div>
           </div>
@@ -276,7 +276,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 text-[13px] text-content-primary focus:outline-none focus:border-surface-strong"
+                  className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 text-[13px] text-content-primary focus:border-surface-strong"
                 />
               </div>
             </div>
@@ -299,7 +299,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                   value={verificationCode}
                   onChange={(e) => setVerificationCode(e.target.value)}
                   placeholder="Pegá el código recibido por correo"
-                  className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 text-[13px] text-content-primary focus:outline-none focus:border-surface-strong font-mono"
+                  className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control pl-9 pr-3 text-[13px] text-content-primary focus:border-surface-strong font-mono"
                 />
               </div>
             </div>
@@ -308,7 +308,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full py-2.5 px-4 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-55 text-white font-bold text-[13px] shadow-card transition flex items-center justify-center gap-2 min-h-[44px]"
+            className="w-full py-2.5 px-4 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-55 text-action-primaryFg font-bold text-[13px] shadow-card transition flex items-center justify-center gap-2 min-h-[44px]"
           >
             {isSubmitting ? (
               <>

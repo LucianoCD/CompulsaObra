@@ -118,6 +118,7 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
   const isMatrixStale = !isLocked && Boolean(matrixStaleReason);
   const fulfillmentStatus = currentMatrix.fulfillment_status ?? 'complete';
   const effectiveSingleVendorId = selectedSingleVendorId || currentMatrix.best_single_vendor_id || null;
+  const effectiveShareToken = lockedBudget?.public_share_token || currentMatrix.public_share_token;
 
   const handleLock = async () => {
     if (isMatrixStale) {
@@ -159,7 +160,7 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
   };
 
   const handleCopyShareLink = () => {
-    const shareUrl = `${window.location.origin}/p/${currentMatrix.public_share_token}`;
+    const shareUrl = `${window.location.origin}/p/${encodeURIComponent(effectiveShareToken)}`;
     void navigator.clipboard.writeText(shareUrl);
     setCopiedLink(true);
     window.setTimeout(() => setCopiedLink(false), 2500);
@@ -204,7 +205,7 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
                 onClick={() => setPaymentModality(mod)}
                 className={`py-1.5 rounded-control transition min-h-[34px] ${
                   paymentModality === mod
-                    ? 'bg-action-primary text-white font-bold shadow-card'
+                    ? 'bg-action-primary text-action-primaryFg font-bold shadow-card'
                     : 'text-content-secondary hover:text-content-primary'
                 }`}
               >
@@ -332,7 +333,7 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
             </span>
             <div className="flex items-center gap-1">
               {budgetStrategy === 'SINGLE_VENDOR' && (
-                <span className="text-[11px] font-bold px-2 py-0.5 rounded-pill bg-action-primary text-white">
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-pill bg-action-primary text-action-primaryFg">
                   Elegida
                 </span>
               )}
@@ -372,7 +373,7 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
             </span>
             <div className="flex items-center gap-1">
               {budgetStrategy === 'SPLIT_CART' && (
-                <span className="text-[11px] font-bold px-2 py-0.5 rounded-pill bg-action-primary text-white">
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-pill bg-action-primary text-action-primaryFg">
                   Elegida
                 </span>
               )}
@@ -483,7 +484,7 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
                   void runComparison(currentRequisition.id);
                 }
               }}
-              className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-50 text-white text-xs font-bold transition min-h-[36px]"
+              className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-50 text-action-primaryFg text-xs font-bold transition min-h-[36px]"
             >
               {isLoading ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -519,7 +520,7 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
                 : undefined
             }
             type="button"
-            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-55 disabled:cursor-not-allowed text-white font-bold text-[13px] shadow-card transition min-h-[44px]"
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-55 disabled:cursor-not-allowed text-action-primaryFg font-bold text-[13px] shadow-card transition min-h-[44px]"
           >
             <Lock className="w-4 h-4" />
             <span>Congelar Presupuesto Definitivo (Lock-Budget)</span>
@@ -554,7 +555,7 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
                 type="button"
                 disabled={downloadingMode !== null}
                 onClick={() => void handleDownloadPdf('client_budget')}
-                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-60 text-white text-[13px] font-bold transition shadow-card min-h-[40px]"
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-60 text-action-primaryFg text-[13px] font-bold transition shadow-card min-h-[40px]"
               >
                 {downloadingMode === 'client_budget' ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -565,7 +566,7 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
               </button>
             </div>
 
-            <div aria-live="polite">
+            <div aria-live="polite" className="space-y-2">
               <button
                 onClick={handleCopyShareLink}
                 type="button"
@@ -579,10 +580,19 @@ export const SplitCartOptimizerCard: React.FC<SplitCartOptimizerCardProps> = ({ 
                 ) : (
                   <>
                     <Copy className="w-4 h-4" />
-                    <span>Copiar Enlace Público (/p/{currentMatrix.public_share_token.slice(0, 8)}...)</span>
+                    <span>Copiar Enlace Público (/p/{effectiveShareToken.slice(0, 8)}...)</span>
                   </>
                 )}
               </button>
+              <a
+                href={`/p/${encodeURIComponent(effectiveShareToken)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-control bg-surface-elevated hover:bg-surface-subtle border border-surface-hairline text-[13px] font-semibold text-action-primary transition min-h-[38px]"
+              >
+                <FileText className="w-4 h-4" />
+                <span>Abrir Vista Pública del Presupuesto</span>
+              </a>
             </div>
           </div>
         )}

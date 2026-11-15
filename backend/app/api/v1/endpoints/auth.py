@@ -7,12 +7,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, field_validator
 import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user_optional, get_current_workspace
+from app.api.deps import get_current_user_optional, get_current_workspace, get_demo_role_from_token
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import (
@@ -86,17 +86,27 @@ class SessionResponse(BaseModel):
     message: Optional[str] = None
 
 
+_DUMMY_BCRYPT_HASH = get_password_hash("compulsa-dummy-timing-guard-v1")
+
+
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str
-    full_name: str
-    workspace_name: Optional[str] = "Mi Estudio / Obra Real"
+    password: str = Field(min_length=8, max_length=72)
+    full_name: str = Field(min_length=2, max_length=120)
+    workspace_name: Optional[str] = Field(default="Mi Estudio / Obra Real", max_length=140)
     role: Optional[str] = "ESTIMATOR"
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_utf8_bytes(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("La contraseña no puede superar los 72 bytes UTF-8.")
+        return value
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=128)
 
 
 class VerifyEmailRequest(BaseModel):
@@ -357,8 +367,15 @@ def login_user(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Cuenta temporalmente bloqueada por múltiples intentos fallidos.",
             )
+        user.failed_login_attempts = 0
+        user.locked_until = None
 
-    if not user or not verify_password(payload.password, user.password_hash):
+    password_valid = (
+        verify_password(payload.password, user.password_hash)
+        if user
+        else (verify_password(payload.password, _DUMMY_BCRYPT_HASH) and False)
+    )
+    if not user or not password_valid:
         auth_rate_limiter.record_failed_attempt(normalized_email, db=db)
         if user:
             user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
@@ -370,7 +387,7 @@ def login_user(
             if user.failed_login_attempts >= settings.AUTH_LOCKOUT_THRESHOLD:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Cuenta bloqueada temporalmente tras exceder el límite de intentos fallidos.",
+                    detail="Cuenta temporalmente bloqueada por múltiples intentos fallidos.",
                 )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -540,16 +557,18 @@ def update_current_role(
     """Actualiza el rol operativo activo (BUYER vs ESTIMATOR) en la cookie de sesión."""
     if payload.role not in ["BUYER", "ESTIMATOR"]:
         raise HTTPException(status_code=400, detail="Rol inválido. Elija 'BUYER' o 'ESTIMATOR'")
-    current_ws.owner_role = payload.role
+    effective_role = payload.role
+    if not current_ws.is_demo:
+        current_ws.owner_role = effective_role
 
-    users = db.scalars(select(User).where(User.workspace_id == current_ws.id)).all()
-    for u in users:
-        u.role = payload.role
-    db.commit()
+        users = db.scalars(select(User).where(User.workspace_id == current_ws.id)).all()
+        for u in users:
+            u.role = effective_role
+        db.commit()
 
     token_claims = {
         "workspace_id": str(current_ws.id),
-        "role": current_ws.owner_role,
+        "role": effective_role,
         "is_demo": current_ws.is_demo,
     }
     if current_user:
@@ -566,7 +585,7 @@ def update_current_role(
 
     return RoleUpdateResponse(
         status="success",
-        role=current_ws.owner_role,
+        role=effective_role,
         workspace_id=current_ws.id,
     )
 
@@ -577,6 +596,7 @@ def get_current_session_info(
     response: Response,
     current_ws: Workspace = Depends(get_current_workspace),
     current_user: Optional[User] = Depends(get_current_user_optional),
+    session_role: Optional[str] = Depends(get_demo_role_from_token),
 ):
     """Retorna estado de sesión actual y asegura cookie CSRF si hay sesión por cookie."""
     if request.cookies.get(AUTH_COOKIE_NAME) and not request.cookies.get(CSRF_COOKIE_NAME):
@@ -589,12 +609,17 @@ def get_current_session_info(
             max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
             path="/",
         )
+    effective_role = (
+        session_role
+        if (current_ws.is_demo and session_role in ("BUYER", "ESTIMATOR"))
+        else current_ws.owner_role
+    )
     return SessionResponse(
         authenticated=True,
         workspace_id=current_ws.id,
         workspace_name=current_ws.name,
         is_demo=current_ws.is_demo,
-        role=current_ws.owner_role,
+        role=effective_role,
         email=current_user.email if current_user else "demo@compulsaobra.com.ar",
         email_verified=current_user.email_verified if current_user else True,
         verification_required=settings.REQUIRE_EMAIL_VERIFICATION,

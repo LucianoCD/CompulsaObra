@@ -59,6 +59,9 @@ export function getMatrixRequisitionStaleReason(
     return 'La cantidad de materiales del pedido cambió respecto a la comparativa actual.';
   }
 
+  const sameNullableNum = (a?: number | null, b?: number | null) =>
+    (a == null && b == null) || (a != null && b != null && Math.abs(a - b) <= 1e-4);
+
   const reqById = new Map(requisition.items.map((it) => [it.id, it]));
   for (const row of matrix.matrix_rows) {
     const reqItem = reqById.get(row.requisition_item_id);
@@ -67,9 +70,13 @@ export function getMatrixRequisitionStaleReason(
     }
     if (
       Math.abs(row.quantity - reqItem.quantity) > 1e-4 ||
-      row.requested_unit.trim().toUpperCase() !== reqItem.requested_unit.trim().toUpperCase()
+      row.requested_unit.trim().toUpperCase() !== reqItem.requested_unit.trim().toUpperCase() ||
+      (row.material_type ?? null) !== (reqItem.material_type ?? null) ||
+      !sameNullableNum(row.diameter_mm, reqItem.diameter_mm) ||
+      !sameNullableNum(row.length_m, reqItem.length_m) ||
+      !sameNullableNum(row.weight_kg, reqItem.weight_kg)
     ) {
-      return `Cambió la cantidad o unidad de "${reqItem.requested_term}". Ejecutá una nueva comparativa para recalcular.`;
+      return `Cambiaron especificaciones, cantidad o unidad de "${reqItem.requested_term}". Ejecutá una nueva comparativa para recalcular.`;
     }
   }
 
@@ -139,11 +146,20 @@ export const useComparisonStore = create<ComparisonState>((set, get) => ({
   loadVendors: async () => {
     try {
       set({ isLoading: true, error: null });
+      const prevKnownIds = new Set(get().vendors.map((v) => v.id));
       const vendors = await apiClient.listVendors();
-      const defaultSelected = vendors.map((v) => v.id);
+      const validIds = new Set(vendors.map((v) => v.id));
+      const prevSelected = get().selectedVendorIds.filter((id) => validIds.has(id));
+      const newlyAddedIds = vendors
+        .filter((v) => !prevKnownIds.has(v.id))
+        .map((v) => v.id);
+      const nextSelected =
+        prevSelected.length > 0
+          ? Array.from(new Set([...prevSelected, ...newlyAddedIds]))
+          : vendors.map((v) => v.id);
       set({
         vendors,
-        selectedVendorIds: defaultSelected,
+        selectedVendorIds: nextSelected,
         isLoading: false,
       });
     } catch (err: unknown) {
@@ -251,15 +267,25 @@ export const useComparisonStore = create<ComparisonState>((set, get) => ({
   },
 
   applyMatrixOverride: async (runId, matchId, payload) => {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    const requestSeq = ++latestRunSeq;
     try {
       set({ isLoading: true, error: null });
       const updatedMatrix = await apiClient.overrideMatch(runId, matchId, payload);
+      if (requestSeq !== latestRunSeq) {
+        return;
+      }
       set({ currentMatrix: updatedMatrix, isLoading: false });
     } catch (err: unknown) {
-      set({
-        isLoading: false,
-        error: err instanceof Error ? err.message : 'Error al aplicar sustitución de producto',
-      });
+      if (requestSeq === latestRunSeq) {
+        set({
+          isLoading: false,
+          error: err instanceof Error ? err.message : 'Error al aplicar sustitución de producto',
+        });
+      }
       throw err;
     }
   },
@@ -271,6 +297,12 @@ export const useComparisonStore = create<ComparisonState>((set, get) => ({
       set({ error: msg });
       throw new Error(msg);
     }
+
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    ++latestRunSeq;
 
     try {
       set({ isLoading: true, error: null });
@@ -286,7 +318,14 @@ export const useComparisonStore = create<ComparisonState>((set, get) => ({
       const lockRes = await apiClient.lockBudget(matrix.run_id, effectivePayload);
       set({
         lockedBudget: lockRes,
-        currentMatrix: { ...matrix, status: 'LOCKED_BUDGET' },
+        currentMatrix: {
+          ...matrix,
+          status: 'LOCKED_BUDGET',
+          is_locked: true,
+          budget_strategy: lockRes.budget_strategy,
+          public_share_token: lockRes.public_share_token,
+          snapshot_content_hash: lockRes.snapshot_content_hash,
+        },
         isLoading: false,
       });
     } catch (err: unknown) {

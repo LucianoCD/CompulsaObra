@@ -5,6 +5,8 @@
 import { create } from 'zustand';
 import { SessionResponse, UserRole } from '../types/api';
 import { apiClient } from '../services/apiClient';
+import { useRequisitionStore } from './useRequisitionStore';
+import { useComparisonStore } from './useComparisonStore';
 
 interface WorkspaceState {
   workspaceId: string | null;
@@ -36,8 +38,13 @@ interface WorkspaceState {
 
 const applySessionToClient = (
   session: SessionResponse,
-  set: (partial: Partial<WorkspaceState>) => void
+  set: (partial: Partial<WorkspaceState>) => void,
+  prevWorkspaceId?: string | null
 ) => {
+  if (prevWorkspaceId && prevWorkspaceId !== session.workspace_id) {
+    useRequisitionStore.getState().resetRequisition();
+    useComparisonStore.getState().resetComparison();
+  }
   apiClient.setWorkspaceId(session.workspace_id);
   set({
     workspaceId: session.workspace_id,
@@ -63,19 +70,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   error: null,
 
   initSession: async () => {
+    const prevWsId = get().workspaceId;
     try {
       set({ isLoading: true, error: null });
 
       try {
         const info = await apiClient.getSessionInfo();
-        applySessionToClient(info, set);
+        applySessionToClient(info, set, prevWsId);
         return;
       } catch {
         // Sin cookie HttpOnly activa: iniciar sesión Demo automáticamente
       }
 
       const session = await apiClient.getDemoSession();
-      applySessionToClient(session, set);
+      applySessionToClient(session, set, prevWsId);
     } catch (err: unknown) {
       set({
         isLoading: false,
@@ -85,11 +93,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   switchMode: async (targetIsDemo: boolean) => {
+    const prevWsId = get().workspaceId;
     try {
       set({ isLoading: true, error: null });
       const currentRole = get().role;
       const session = await apiClient.switchMode(targetIsDemo, currentRole);
-      applySessionToClient(session, set);
+      applySessionToClient(session, set, prevWsId);
     } catch (err: unknown) {
       set({
         isLoading: false,
@@ -100,10 +109,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   login: async (email: string, password: string) => {
+    const prevWsId = get().workspaceId;
     try {
       set({ isLoading: true, error: null });
       const session = await apiClient.login({ email, password });
-      applySessionToClient(session, set);
+      applySessionToClient(session, set, prevWsId);
     } catch (err: unknown) {
       set({
         isLoading: false,
@@ -144,10 +154,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   verifyEmail: async (email: string, token: string) => {
+    const prevWsId = get().workspaceId;
     try {
       set({ isLoading: true, error: null });
       const session = await apiClient.verifyEmail({ email, token });
-      applySessionToClient(session, set);
+      applySessionToClient(session, set, prevWsId);
       return session;
     } catch (err: unknown) {
       set({
@@ -183,6 +194,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       await apiClient.logout();
     } finally {
       apiClient.setWorkspaceId(null);
+      useRequisitionStore.getState().resetRequisition();
+      useComparisonStore.getState().resetComparison();
       set({ isLoading: false, email: null, pendingVerificationEmail: null });
       await get().initSession();
     }
@@ -190,8 +203,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   setRole: async (role: UserRole) => {
     try {
-      await apiClient.updateRole(role);
-      set({ role });
+      set({ error: null });
+      const res = await apiClient.updateRole(role);
+      set({ role: res.role });
     } catch (err: unknown) {
       set({
         error: err instanceof Error ? err.message : 'Error al actualizar rol',

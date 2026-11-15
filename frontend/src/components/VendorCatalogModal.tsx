@@ -22,7 +22,7 @@ interface VendorCatalogModalProps {
   onClose: () => void;
 }
 
-const MAX_CATALOG_BYTES = 12 * 1024 * 1024;
+const MAX_CATALOG_BYTES = 10 * 1024 * 1024;
 
 export const VendorCatalogModal: React.FC<VendorCatalogModalProps> = ({ isOpen, onClose }) => {
   const { vendors, loadVendors } = useComparisonStore();
@@ -58,6 +58,7 @@ export const VendorCatalogModal: React.FC<VendorCatalogModalProps> = ({ isOpen, 
   const [acopioFreezeDays, setAcopioFreezeDays] = useState('45');
   const [acopioMaxWithdrawalDays, setAcopioMaxWithdrawalDays] = useState('90');
   const [acopioMinNoticeHours, setAcopioMinNoticeHours] = useState('24');
+  const [acopioPriceBasis, setAcopioPriceBasis] = useState<'LIST' | 'CASH'>('LIST');
 
   const dialogRef = useRef<HTMLDialogElement | null>(null);
 
@@ -87,7 +88,7 @@ export const VendorCatalogModal: React.FC<VendorCatalogModalProps> = ({ isOpen, 
       return;
     }
     if (selected.size > MAX_CATALOG_BYTES) {
-      setErrorMessage('El archivo supera el tamaño máximo permitido de 12 MB.');
+      setErrorMessage('El archivo supera el tamaño máximo permitido de 10 MB.');
       setFile(null);
       e.target.value = '';
       return;
@@ -132,6 +133,7 @@ export const VendorCatalogModal: React.FC<VendorCatalogModalProps> = ({ isOpen, 
           freeze_days: parseInt(acopioFreezeDays, 10) || 30,
           max_withdrawal_days: parseInt(acopioMaxWithdrawalDays, 10) || 90,
           min_notice_hours: parseInt(acopioMinNoticeHours, 10) || 24,
+          price_basis: acopioPriceBasis,
         },
       });
       await loadVendors();
@@ -235,7 +237,7 @@ export const VendorCatalogModal: React.FC<VendorCatalogModalProps> = ({ isOpen, 
                     id="vendor-select"
                     value={selectedVendorId}
                     onChange={(e) => setSelectedVendorId(e.target.value)}
-                    className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control px-3 text-[13px] text-content-primary focus:outline-none"
+                    className="w-full h-10 bg-surface-subtle border border-surface-hairline rounded-control px-3 text-[13px] text-content-primary"
                   >
                     {vendors.map((v) => (
                       <option key={v.id} value={v.id}>
@@ -263,7 +265,7 @@ export const VendorCatalogModal: React.FC<VendorCatalogModalProps> = ({ isOpen, 
               {/* Selector de archivo accesible (44px) */}
               <div className="space-y-1.5">
                 <span className="block text-[13px] font-semibold text-content-secondary">
-                  Planilla de precios (.xlsx, .xls o .csv, máximo 12 MB):
+                  Planilla de precios (.xlsx, .xls o .csv, máximo 10 MB):
                 </span>
                 <input
                   id="catalog-file-input"
@@ -441,7 +443,7 @@ export const VendorCatalogModal: React.FC<VendorCatalogModalProps> = ({ isOpen, 
                 <button
                   type="submit"
                   disabled={isUploading || !file || !selectedVendorId}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-control bg-action-primary hover:bg-action-hover text-white font-bold text-[13px] shadow-card transition disabled:opacity-55 min-h-[40px]"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-control bg-action-primary hover:bg-action-hover text-action-primaryFg font-bold text-[13px] shadow-card transition disabled:opacity-55 min-h-[40px]"
                 >
                   {isUploading ? (
                     <>
@@ -575,7 +577,7 @@ export const VendorCatalogModal: React.FC<VendorCatalogModalProps> = ({ isOpen, 
                 </div>
 
                 {acopioEnabled && (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs pt-1">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs pt-1">
                     <div>
                       <label
                         htmlFor="vendor-acopio-downpayment"
@@ -641,6 +643,25 @@ export const VendorCatalogModal: React.FC<VendorCatalogModalProps> = ({ isOpen, 
                         className="w-full h-9 bg-surface-elevated border border-surface-hairline rounded-control px-2.5 text-[13px] text-content-primary font-mono tabular-nums"
                       />
                     </div>
+                    <div>
+                      <label
+                        htmlFor="vendor-acopio-pricebasis"
+                        className="block text-xs text-content-muted font-semibold mb-1"
+                      >
+                        Base de precios
+                      </label>
+                      <select
+                        id="vendor-acopio-pricebasis"
+                        value={acopioPriceBasis}
+                        onChange={(e) =>
+                          setAcopioPriceBasis(e.target.value === 'CASH' ? 'CASH' : 'LIST')
+                        }
+                        className="w-full h-9 bg-surface-elevated border border-surface-hairline rounded-control px-2 text-[13px] text-content-primary"
+                      >
+                        <option value="LIST">Precio de Lista</option>
+                        <option value="CASH">Precio Contado</option>
+                      </select>
+                    </div>
                   </div>
                 )}
               </div>
@@ -656,7 +677,7 @@ export const VendorCatalogModal: React.FC<VendorCatalogModalProps> = ({ isOpen, 
                 <button
                   type="submit"
                   disabled={isUploading}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-control bg-action-primary hover:bg-action-hover text-white font-bold text-[13px] shadow-card transition min-h-[40px]"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-control bg-action-primary hover:bg-action-hover text-action-primaryFg font-bold text-[13px] shadow-card transition min-h-[40px]"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Guardar Corralón</span>

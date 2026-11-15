@@ -308,7 +308,7 @@ export const MultiVendorMatrix: React.FC = () => {
                 void runComparison(currentRequisition.id);
               }
             }}
-            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-50 text-white text-xs font-bold transition min-h-[36px] shrink-0"
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-50 text-action-primaryFg text-xs font-bold transition min-h-[36px] shrink-0"
           >
             {isComparisonLoading ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -325,7 +325,7 @@ export const MultiVendorMatrix: React.FC = () => {
         tabIndex={0}
         role="region"
         aria-label="Tabla comparativa de precios con desplazamiento horizontal"
-        className="overflow-x-auto border border-surface-hairline rounded-control bg-surface-canvas matrix-scroll-container focus:outline-none"
+        className="overflow-x-auto border border-surface-hairline rounded-control bg-surface-canvas matrix-scroll-container"
       >
         <table role="grid" className="w-full text-left text-[13px] border-collapse">
           <thead>
@@ -653,6 +653,14 @@ export const MultiVendorMatrix: React.FC = () => {
                 vendorProducts.map((p) => {
                   const isSelected = selectedProductId === p.id;
                   const isCurrentAssigned = overrideCell.cell.vendor_product_id === p.id;
+                  const vendorSummary = currentMatrix.vendors.find(
+                    (v) => v.vendor_id === overrideCell.cell.vendor_id
+                  );
+                  const useCashPrice =
+                    currentMatrix.payment_modality === 'CASH' ||
+                    (currentMatrix.payment_modality === 'ACOPIO' &&
+                      vendorSummary?.acopio_summary?.price_basis === 'CASH');
+                  const displayedPrice = useCashPrice ? p.price_cash_ars : p.price_list_ars;
 
                   return (
                     <button
@@ -682,7 +690,7 @@ export const MultiVendorMatrix: React.FC = () => {
                         )}
                       </div>
                       <div className="text-right font-mono font-bold text-content-primary tabular-nums shrink-0">
-                        $ {p.price_cash_ars.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                        $ {displayedPrice.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
                       </div>
                     </button>
                   );
@@ -723,7 +731,7 @@ export const MultiVendorMatrix: React.FC = () => {
                       value={overrideReason}
                       onChange={(e) => setOverrideReason(e.target.value)}
                       placeholder="Ej.: Aprobado por dirección de obra por falta en plaza..."
-                      className="w-full h-9 px-2.5 rounded-control border border-surface-strong bg-surface-canvas text-content-primary text-[13px] focus:outline-none"
+                      className="w-full h-9 px-2.5 rounded-control border border-surface-strong bg-surface-canvas text-content-primary text-[13px]"
                     />
                   </div>
                 )}
@@ -746,7 +754,7 @@ export const MultiVendorMatrix: React.FC = () => {
                   (hasDimensionMismatch && (!forceOverride || overrideReason.trim().length < 10))
                 }
                 type="button"
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-55 text-white font-bold text-[13px] shadow-card transition min-h-[40px]"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-55 text-action-primaryFg font-bold text-[13px] shadow-card transition min-h-[40px]"
               >
                 {savingOverride ? (
                   <>

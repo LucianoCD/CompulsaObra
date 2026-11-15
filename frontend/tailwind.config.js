@@ -21,6 +21,7 @@ export default {
         },
         action: {
           primary: "var(--action-primary)",
+          primaryFg: "var(--action-primary-fg)",
           hover: "var(--action-primary-hover)",
           focus: "var(--action-focus)",
           danger: "var(--action-danger)",

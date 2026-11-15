@@ -15,6 +15,7 @@
   --text-muted: #57534E;
 
   --action-primary: #A83511;
+  --action-primary-fg: #FFFFFF;
   --action-primary-hover: #8C2B0D;
   --action-focus: #1D4ED8;
   --action-danger: #DC2626;
@@ -55,6 +56,7 @@
   --text-muted: #949BA6;
 
   --action-primary: #E8683A;
+  --action-primary-fg: #121316;
   --action-primary-hover: #F27D52;
   --action-focus: #60A5FA;
   --action-danger: #F87171;
@@ -142,7 +144,7 @@
   z-index: 100;
   padding: 8px 16px;
   background-color: var(--action-primary);
-  color: #FFFFFF;
+  color: var(--action-primary-fg);
   font-weight: 600;
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);

@@ -257,7 +257,7 @@ class PDFGeneratorService:
             order = str(row.get("line_order", 1))
             term = clean_pdf_text(row.get("requested_term", "")[:34])
             qty = float(row.get("quantity", 1.0))
-            qty_str = f"{qty:g} {row.get('requested_unit', 'UN')}"
+            qty_str = clean_pdf_text(f"{qty:g} {row.get('requested_unit', 'UN')}"[:14])
 
             low_sub = row.get("lowest_line_subtotal_ars")
             if low_sub is None:

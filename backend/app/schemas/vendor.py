@@ -11,9 +11,9 @@ class AcopioConfigSchema(BaseModel):
 
     enabled: bool = Field(default=False)
     min_down_payment_pct: float = Field(default=100.0, ge=0.0, le=100.0)
-    freeze_days: int = Field(default=30, ge=1)
-    max_withdrawal_days: int = Field(default=60, ge=1)
-    min_notice_hours: int = Field(default=24, ge=0)
+    freeze_days: int = Field(default=30, ge=1, le=3650)
+    max_withdrawal_days: int = Field(default=60, ge=1, le=3650)
+    min_notice_hours: int = Field(default=24, ge=0, le=720)
     price_basis: str = Field(default="LIST", pattern="^(LIST|CASH)$")
 
 
@@ -22,7 +22,7 @@ class VendorCreateRequest(BaseModel):
     locality: str = Field(min_length=2, max_length=80)
     whatsapp_phone: Optional[str] = Field(default=None, max_length=30)
     cash_discount_pct: float = Field(default=0.0, ge=0.0, le=100.0)
-    estimate_delivery_fee_ars: float = Field(default=0.0, ge=0.0)
+    estimate_delivery_fee_ars: float = Field(default=0.0, ge=0.0, le=100_000_000.0)
     acopio_config: Optional[AcopioConfigSchema] = None
 
 

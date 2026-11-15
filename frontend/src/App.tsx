@@ -77,7 +77,7 @@ const EmailVerificationPage: React.FC<EmailVerificationPageProps> = ({ onNavigat
             e.preventDefault();
             onNavigate('/');
           }}
-          className="inline-flex items-center justify-center px-4 py-2.5 rounded-control bg-action-primary hover:bg-action-hover text-white font-bold text-[13px] transition min-h-[42px]"
+          className="inline-flex items-center justify-center px-4 py-2.5 rounded-control bg-action-primary hover:bg-action-hover text-action-primaryFg font-bold text-[13px] transition min-h-[42px]"
         >
           Ir a CompulsaObra
         </a>

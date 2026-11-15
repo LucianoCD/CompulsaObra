@@ -146,7 +146,7 @@ export const DemoBanner: React.FC<DemoBannerProps> = ({
               <button
                 onClick={() => setIsAuthOpen(true)}
                 type="button"
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-control bg-action-primary hover:bg-action-hover text-white text-[13px] font-bold transition shadow-card min-h-[38px]"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-control bg-action-primary hover:bg-action-hover text-action-primaryFg text-[13px] font-bold transition shadow-card min-h-[38px]"
               >
                 <LogIn className="w-4 h-4" />
                 <span>Acceder</span>
@@ -191,6 +191,9 @@ export const DemoBanner: React.FC<DemoBannerProps> = ({
               {isDemo ? (
                 <>
                   <Info className="w-4 h-4 shrink-0 text-semantic-hitlText" />
+                  <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded-control bg-surface-elevated border border-semantic-hitlBorder/50 text-semantic-hitlText">
+                    [MODO DEMO DATOS COMERCIALES ILUSTRATIVOS]
+                  </span>
                   <span className="font-bold">
                     Modo Exploración · 3 corralones de Jujuy
                   </span>
@@ -227,7 +230,7 @@ export const DemoBanner: React.FC<DemoBannerProps> = ({
                     onKeyDown={(e) => handleRoleKeyDown(e, 'ESTIMATOR')}
                     className={`flex items-center gap-1.5 px-2.5 py-1 rounded-control text-xs font-semibold transition min-h-[30px] ${
                       role === 'ESTIMATOR'
-                        ? 'bg-action-primary text-white shadow-card'
+                        ? 'bg-action-primary text-action-primaryFg shadow-card'
                         : 'text-content-secondary hover:text-content-primary'
                     }`}
                   >
@@ -244,7 +247,7 @@ export const DemoBanner: React.FC<DemoBannerProps> = ({
                     onKeyDown={(e) => handleRoleKeyDown(e, 'BUYER')}
                     className={`flex items-center gap-1.5 px-2.5 py-1 rounded-control text-xs font-semibold transition min-h-[30px] ${
                       role === 'BUYER'
-                        ? 'bg-action-primary text-white shadow-card'
+                        ? 'bg-action-primary text-action-primaryFg shadow-card'
                         : 'text-content-secondary hover:text-content-primary'
                     }`}
                   >

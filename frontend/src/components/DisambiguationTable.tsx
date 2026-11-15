@@ -32,6 +32,16 @@ const DIAMETER_OPTIONS = [
   { label: '110 mm', sublabel: 'Cloacal', value: 110 },
 ];
 
+const STEEL_DIAMETER_OPTIONS = [
+  { label: '6 mm', sublabel: '1/4" obra', value: 6 },
+  { label: '8 mm', sublabel: 'Estructural', value: 8 },
+  { label: '10 mm', sublabel: 'Estructural', value: 10 },
+  { label: '12 mm', sublabel: 'Estructural', value: 12 },
+  { label: '16 mm', sublabel: 'Estructural', value: 16 },
+  { label: '20 mm', sublabel: 'Estructural', value: 20 },
+  { label: '25 mm', sublabel: '1" obra', value: 25 },
+];
+
 const STANDARD_UNITS = ['UN', 'BARRA', 'BOLSA', 'M', 'KG', 'M2', 'M3'];
 
 interface PendingDraftSelection {
@@ -82,7 +92,11 @@ export const DisambiguationTable: React.FC<DisambiguationTableProps> = ({ onProc
   ) => {
     setActionError(null);
     const saveAlias = !!saveAsAliasMap[item.id];
-    const extraParts = [materialLabel, diameterLabel].filter(Boolean).join(' ');
+    const normalizedTermLower = item.requested_term.toLowerCase();
+    const extraParts = [materialLabel, diameterLabel]
+      .filter((lbl): lbl is string => Boolean(lbl))
+      .filter((lbl) => !normalizedTermLower.includes(lbl.toLowerCase()))
+      .join(' ');
     const confirmedTerm = `${item.requested_term} ${extraParts}`.trim();
 
     try {
@@ -275,6 +289,12 @@ export const DisambiguationTable: React.FC<DisambiguationTableProps> = ({ onProc
               const isPending = item.completeness === 'missing_critical_attribute';
               const needsMaterial = !item.material_type;
               const needsDiameter = item.diameter_mm == null;
+              const isSteelItem =
+                item.material_type === 'Acero' ||
+                /\b(barra|hierro|acero|varilla|malla)\b/i.test(
+                  `${item.requested_term} ${item.raw_line}`
+                );
+              const diameterOptions = isSteelItem ? STEEL_DIAMETER_OPTIONS : DIAMETER_OPTIONS;
               const draft = draftSelections[item.id] || {};
               const unitOptions = STANDARD_UNITS.includes(item.requested_unit)
                 ? STANDARD_UNITS
@@ -425,7 +445,7 @@ export const DisambiguationTable: React.FC<DisambiguationTableProps> = ({ onProc
                                       aria-pressed={isDraftPicked}
                                       className={`px-3.5 py-1.5 rounded-control border text-[13px] font-semibold transition shadow-card min-h-[38px] ${
                                         isDraftPicked
-                                          ? 'bg-action-primary text-white border-action-primary'
+                                          ? 'bg-action-primary text-action-primaryFg border-action-primary'
                                           : 'bg-surface-elevated hover:bg-semantic-hitlBg text-content-primary hover:text-semantic-hitlText border-surface-hairline hover:border-semantic-hitlBorder'
                                       }`}
                                     >
@@ -448,7 +468,7 @@ export const DisambiguationTable: React.FC<DisambiguationTableProps> = ({ onProc
                                 aria-label={`Opciones de diámetro para ${item.raw_line}`}
                                 className="flex flex-wrap items-center gap-2"
                               >
-                                {DIAMETER_OPTIONS.map((diam, diamIdx) => {
+                                {diameterOptions.map((diam, diamIdx) => {
                                   const isDraftPicked = draft.diameterMm === diam.value;
                                   const attachRef =
                                     isFirstPendingItem && !needsMaterial && diamIdx === 0
@@ -467,7 +487,7 @@ export const DisambiguationTable: React.FC<DisambiguationTableProps> = ({ onProc
                                       aria-pressed={isDraftPicked}
                                       className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-control border text-[13px] font-semibold transition shadow-card min-h-[38px] ${
                                         isDraftPicked
-                                          ? 'bg-action-primary text-white border-action-primary'
+                                          ? 'bg-action-primary text-action-primaryFg border-action-primary'
                                           : 'bg-surface-elevated hover:bg-semantic-hitlBg text-content-primary hover:text-semantic-hitlText border-surface-hairline hover:border-semantic-hitlBorder'
                                       }`}
                                     >
@@ -515,7 +535,7 @@ export const DisambiguationTable: React.FC<DisambiguationTableProps> = ({ onProc
               type="button"
               disabled={isLoading}
               onClick={handleStartComparison}
-              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-50 text-white text-xs font-bold transition min-h-[36px] shrink-0"
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-50 text-action-primaryFg text-xs font-bold transition min-h-[36px] shrink-0"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               <span>Recalcular comparativa</span>
@@ -542,7 +562,7 @@ export const DisambiguationTable: React.FC<DisambiguationTableProps> = ({ onProc
           type="button"
           className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-control font-bold text-[13px] shadow-card transition min-h-[44px] ${
             allResolved
-              ? 'bg-action-primary hover:bg-action-hover text-white cursor-pointer'
+              ? 'bg-action-primary hover:bg-action-hover text-action-primaryFg cursor-pointer'
               : 'bg-surface-subtle text-content-muted border border-surface-hairline cursor-not-allowed opacity-70'
           }`}
           title={!allResolved ? 'Debés resolver los ítems pendientes antes de comparar' : 'Ejecutar comparativa'}

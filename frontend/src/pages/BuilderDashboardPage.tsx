@@ -146,7 +146,7 @@ export const BuilderDashboardPage: React.FC<BuilderDashboardPageProps> = ({ onOp
               className={`h-7 w-7 rounded-pill flex items-center justify-center font-bold text-xs shrink-0 border ${
                 step1Done
                   ? 'bg-semantic-winnerBg text-semantic-winnerText border-emerald-600/30'
-                  : 'bg-action-primary text-white border-action-primary'
+                  : 'bg-action-primary text-action-primaryFg border-action-primary'
               }`}
             >
               {step1Done ? <Check className="w-4 h-4" /> : '1'}
@@ -215,7 +215,7 @@ export const BuilderDashboardPage: React.FC<BuilderDashboardPageProps> = ({ onOp
                 step3Done
                   ? 'bg-semantic-winnerBg text-semantic-winnerText border-emerald-600/30'
                   : step2Done
-                    ? 'bg-action-primary text-white border-action-primary'
+                    ? 'bg-action-primary text-action-primaryFg border-action-primary'
                     : 'bg-surface-subtle text-content-muted border-surface-hairline'
               }`}
             >
@@ -350,7 +350,7 @@ export const BuilderDashboardPage: React.FC<BuilderDashboardPageProps> = ({ onOp
                   void runComparison(currentRequisition.id);
                 }
               }}
-              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-50 text-white text-[13px] font-bold transition min-h-[36px] shrink-0"
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-control bg-action-primary hover:bg-action-hover disabled:opacity-50 text-action-primaryFg text-[13px] font-bold transition min-h-[36px] shrink-0"
             >
               {isComparisonLoading ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />

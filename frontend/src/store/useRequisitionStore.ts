@@ -15,7 +15,7 @@ interface RequisitionState {
   isLoading: boolean;
   error: string | null;
 
-  ingestPreset: (presetId: string) => Promise<void>;
+  ingestPreset: (presetId: string, clientName?: string) => Promise<void>;
   ingestText: (title: string, rawText: string, clientName?: string) => Promise<void>;
   ingestFile: (title: string, file: File, clientName?: string) => Promise<void>;
   resolveItem: (itemId: string, payload: ItemClarificationResolveRequest) => Promise<void>;
@@ -45,19 +45,22 @@ export const useRequisitionStore = create<RequisitionState>((set, get) => ({
   isLoading: false,
   error: null,
 
-  ingestPreset: async (presetId: string) =>
-    runRequisitionRequest(
+  ingestPreset: async (presetId: string, clientName?: string) => {
+    await runRequisitionRequest(
       set,
       () =>
         apiClient.ingestRequisitionJson({
           title: `Pedido desde Preset: ${presetId}`,
+          client_name: clientName?.trim() || null,
           preset_id: presetId,
         }),
       'Error al cargar preset'
-    ),
+    );
+    useComparisonStore.getState().resetComparison();
+  },
 
-  ingestText: async (title: string, rawText: string, clientName?: string) =>
-    runRequisitionRequest(
+  ingestText: async (title: string, rawText: string, clientName?: string) => {
+    await runRequisitionRequest(
       set,
       () =>
         apiClient.ingestRequisitionJson({
@@ -66,7 +69,9 @@ export const useRequisitionStore = create<RequisitionState>((set, get) => ({
           raw_text: rawText,
         }),
       'Error al procesar texto'
-    ),
+    );
+    useComparisonStore.getState().resetComparison();
+  },
 
   ingestFile: async (title: string, file: File, clientName?: string) => {
     const formData = new FormData();
@@ -75,11 +80,12 @@ export const useRequisitionStore = create<RequisitionState>((set, get) => ({
       formData.append('client_name', clientName.trim());
     }
     formData.append('image_file', file);
-    return runRequisitionRequest(
+    await runRequisitionRequest(
       set,
       () => apiClient.ingestRequisitionForm(formData),
       'Error al procesar imagen'
     );
+    useComparisonStore.getState().resetComparison();
   },
 
   resolveItem: async (itemId: string, payload: ItemClarificationResolveRequest) => {

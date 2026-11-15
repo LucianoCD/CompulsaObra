@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Dict, Any, Optional
 import openpyxl
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.vendor import Vendor, PriceList, VendorProduct
@@ -23,7 +23,7 @@ def parse_argentina_currency(val: Any) -> Decimal:
     
     Soporta: '$ 10.500,50', '10.500,50', '$10500', '10.500', 10500.5, '10500'
     """
-    if val is None:
+    if val is None or isinstance(val, bool):
         raise CatalogImportValidationError("Precio no puede ser nulo")
     
     if isinstance(val, (int, float, Decimal)):
@@ -33,6 +33,8 @@ def parse_argentina_currency(val: Any) -> Decimal:
         return d.quantize(Decimal("0.01"))
     
     s = str(val).strip()
+    if "-" in s:
+        raise CatalogImportValidationError(f"El precio no puede ser negativo o inválido: {val}")
     # Eliminar signo peso, espacios y caracteres no numéricos excepto puntos y comas
     s = re.sub(r"[^\d.,]", "", s)
     if not s:
@@ -176,7 +178,7 @@ class CatalogImporterService:
         workspace_id: Optional[uuid.UUID] = None,
     ) -> CatalogImportSummary:
         """Importa el catálogo, aplica versionado incremental y deduplicación por row_sha256."""
-        vendor = db.scalar(select(Vendor).where(Vendor.id == vendor_id))
+        vendor = db.scalar(select(Vendor).where(Vendor.id == vendor_id).with_for_update())
         if not vendor:
             raise CatalogImportValidationError(f"Comercio con ID {vendor_id} no encontrado")
 
@@ -206,18 +208,10 @@ class CatalogImporterService:
                 prev_products_by_hash[prod.row_sha256] = prod
 
         new_version_number = (prev_price_list.version_number + 1) if prev_price_list else 1
-
-        new_price_list = PriceList(
-            id=uuid.uuid4(),
-            vendor_id=vendor_id,
-            version_number=new_version_number,
-            source_filename=filename,
-            valid_from=datetime.now(timezone.utc),
-            row_count=0,
-            is_active=True,
-        )
-        db.add(new_price_list)
-        db.flush()
+        new_price_list_id = uuid.uuid4()
+        safe_filename = (filename or "catalogo.csv").strip()[:255]
+        bind = db.get_bind()
+        is_postgres = bind is not None and bind.dialect.name == "postgresql"
 
         sku_col = strip_accents(mapping.sku_col.lower())
         desc_col = strip_accents(mapping.desc_col.lower())
@@ -234,33 +228,70 @@ class CatalogImporterService:
         seen_hashes_in_batch: set[str] = set()
 
         for idx, row in enumerate(raw_rows, start=1):
-            raw_sku = str(row.get(sku_col, f"SKU-{idx}") or f"SKU-{idx}").strip()
-            raw_desc = str(row.get(desc_col, "") or "").strip()
+            raw_sku_cell = row.get(sku_col)
+            if raw_sku_cell is None or isinstance(raw_sku_cell, bool) or str(raw_sku_cell).strip() == "":
+                raw_sku = f"SKU-{idx}"
+            elif isinstance(raw_sku_cell, float) and raw_sku_cell.is_integer():
+                raw_sku = str(int(raw_sku_cell))
+            else:
+                raw_sku = str(raw_sku_cell).strip()
+
+            raw_desc_cell = row.get(desc_col)
+            raw_desc = str(raw_desc_cell).strip() if raw_desc_cell is not None else ""
             if not raw_desc:
                 continue
 
-            sku_val = sanitize_cell_value(raw_sku)
+            sku_val = sanitize_cell_value(raw_sku)[:80]
             clean_desc = sanitize_cell_value(raw_desc)
 
             # Validar precio con tolerancia: si trae "Consultar" o formato inválido, omitir fila
             try:
-                price_cash = parse_argentina_currency(row.get(cash_col))
-                if list_col and row.get(list_col) is not None:
-                    price_list = parse_argentina_currency(row.get(list_col))
-                else:
-                    price_list = price_cash
+                raw_cash = row.get(cash_col)
+                raw_list = row.get(list_col) if list_col else None
+                has_cash_val = raw_cash is not None and not (isinstance(raw_cash, str) and raw_cash.strip() == "")
+                has_list_val = raw_list is not None and not (isinstance(raw_list, str) and raw_list.strip() == "")
+                if not has_cash_val and not has_list_val:
+                    raise CatalogImportValidationError("Fila sin precio válido")
 
-                # Si solo se proveyó un precio y el comercio tiene descuento por pago contado (CO-09)
-                if price_cash == price_list and vendor.cash_discount_pct and float(vendor.cash_discount_pct) > 0:
-                    discount_factor = (Decimal("100") - Decimal(str(vendor.cash_discount_pct))) / Decimal("100")
-                    price_cash = (price_list * discount_factor).quantize(Decimal("0.01"))
+                parsed_cash = parse_argentina_currency(raw_cash) if has_cash_val else None
+                parsed_list = parse_argentina_currency(raw_list) if has_list_val else None
+
+                if parsed_cash is None and parsed_list is not None:
+                    price_list = parsed_list
+                    if vendor.cash_discount_pct and float(vendor.cash_discount_pct) > 0:
+                        discount_factor = (Decimal("100") - Decimal(str(vendor.cash_discount_pct))) / Decimal("100")
+                        price_cash = (price_list * discount_factor).quantize(Decimal("0.01"))
+                    else:
+                        price_cash = price_list
+                elif parsed_list is None and parsed_cash is not None:
+                    price_cash = parsed_cash
+                    price_list = parsed_cash
+                else:
+                    assert parsed_cash is not None and parsed_list is not None
+                    price_cash = parsed_cash
+                    price_list = parsed_list
             except CatalogImportValidationError:
                 skipped_invalid_count += 1
                 continue
 
-            sale_unit = str(row.get(unit_col, "UN") or "UN").strip().upper()
-            brand_val = str(row.get(brand_col, "") or "").strip() or None
-            category_val = str(row.get(cat_col, "") or "").strip() or None
+            raw_unit_cell = row.get(unit_col) if unit_col else None
+            sale_unit = (
+                str(raw_unit_cell).strip().upper()[:30]
+                if raw_unit_cell is not None and str(raw_unit_cell).strip()
+                else "UN"
+            )
+            raw_brand_cell = row.get(brand_col) if brand_col else None
+            brand_val = (
+                str(raw_brand_cell).strip()[:80]
+                if raw_brand_cell is not None and str(raw_brand_cell).strip()
+                else None
+            )
+            raw_cat_cell = row.get(cat_col) if cat_col else None
+            category_val = (
+                str(raw_cat_cell).strip()[:80]
+                if raw_cat_cell is not None and str(raw_cat_cell).strip()
+                else None
+            )
 
             normalized_desc = strip_accents(clean_desc).lower()
             row_sha256 = hashlib.sha256(f"{sku_val.strip().upper()}||{normalized_desc}".encode("utf-8")).hexdigest()
@@ -279,17 +310,21 @@ class CatalogImporterService:
                 material_type = prev_p.material_type
                 unchanged_count += 1
             else:
-                # Fila nueva o con descripción modificada: ejecutar normalizador físico
-                parsed = UnitNormalizerService.parse_single_line(clean_desc, line_order=idx)
+                # Fila nueva o con descripción modificada: ejecutar normalizador físico en modo catálogo
+                parsed = UnitNormalizerService.parse_single_line(
+                    clean_desc,
+                    line_order=idx,
+                    is_catalog_description=True,
+                )
                 diameter_mm = Decimal(str(parsed.diameter_mm)) if parsed.diameter_mm is not None else None
                 length_m = Decimal(str(parsed.length_m)) if parsed.length_m is not None else None
                 weight_kg = Decimal(str(parsed.weight_kg)) if parsed.weight_kg is not None else None
-                material_type = parsed.material_type
+                material_type = parsed.material_type[:60] if parsed.material_type else None
                 new_or_updated_count += 1
 
             new_prod = VendorProduct(
                 id=uuid.uuid4(),
-                price_list_id=new_price_list.id,
+                price_list_id=new_price_list_id,
                 vendor_id=vendor_id,
                 sku=sku_val,
                 raw_description=clean_desc,
@@ -306,17 +341,33 @@ class CatalogImporterService:
                 weight_kg=weight_kg,
                 material_type=material_type,
                 row_sha256=row_sha256,
+                search_vector=(
+                    func.to_tsvector("spanish", func.unaccent(normalized_desc))
+                    if is_postgres
+                    else None
+                ),
             )
             new_products.append(new_prod)
 
         if not new_products:
+            db.rollback()
             raise CatalogImportValidationError("No se pudo extraer ningún producto válido con precio numérico de la planilla.")
 
-        # Desactivar lista anterior
+        new_price_list = PriceList(
+            id=new_price_list_id,
+            vendor_id=vendor_id,
+            version_number=new_version_number,
+            source_filename=safe_filename,
+            valid_from=datetime.now(timezone.utc),
+            row_count=len(new_products),
+            is_active=True,
+        )
+
+        # Desactivar lista anterior y persistir la nueva lista junto con sus productos
         if prev_price_list:
             prev_price_list.is_active = False
 
-        new_price_list.row_count = len(new_products)
+        db.add(new_price_list)
         db.add_all(new_products)
         db.commit()
 
@@ -328,7 +379,7 @@ class CatalogImporterService:
             new_or_updated_rows=new_or_updated_count,
             unchanged_skipped_rows=unchanged_count,
             skipped_invalid_rows=skipped_invalid_count,
-            source_filename=filename,
+            source_filename=safe_filename,
         )
 
     @classmethod

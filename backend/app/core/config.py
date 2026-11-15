@@ -1,6 +1,7 @@
 """Configuración centralizada y tipada con Pydantic Settings V2."""
 
 from email.utils import parseaddr
+from pathlib import Path
 import re
 import secrets
 from typing import List, Literal, Optional, Union
@@ -187,6 +188,19 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "En entorno de producción debe configurarse REDIS_URL para el rate limiting compartido."
                 )
+
+            if "*" in self.CORS_ORIGINS:
+                raise ValueError("En entorno de producción no se permite comodín '*' en CORS_ORIGINS.")
+            if "CORS_ORIGINS" in self.model_fields_set:
+                if not self.CORS_ORIGINS or all(
+                    (urlparse(o).hostname or "").lower() in DISALLOWED_PROD_HOSTS
+                    for o in self.CORS_ORIGINS
+                ):
+                    raise ValueError(
+                        "En entorno de producción CORS_ORIGINS explícito debe incluir orígenes públicos válidos."
+                    )
+            else:
+                self.CORS_ORIGINS = [f"{parsed_url.scheme}://{parsed_url.netloc}"]
         return self
 
     @field_validator("DATABASE_URL", mode="before")
@@ -210,7 +224,7 @@ class Settings(BaseSettings):
         return v if isinstance(v, list) else [str(v)]
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(str(Path(__file__).resolve().parents[2] / ".env"), ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",

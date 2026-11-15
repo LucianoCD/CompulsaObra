@@ -52,6 +52,11 @@ return 1
 def get_password_hash(password: str) -> str:
     """Genera hash bcrypt seguro para contraseñas de usuarios."""
     pwd_bytes = password.encode("utf-8")
+    if len(pwd_bytes) > 72:
+        raise HTTPException(
+            status_code=getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422),
+            detail="La contraseña no puede superar los 72 bytes UTF-8.",
+        )
     salt = bcrypt.gensalt()
     return bcrypt.hashpw(pwd_bytes, salt).decode("utf-8")
 
@@ -59,7 +64,12 @@ def get_password_hash(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verifica una contraseña contra su hash bcrypt."""
     try:
-        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+        if not plain_password or not hashed_password:
+            return False
+        pwd_bytes = plain_password.encode("utf-8")
+        if len(pwd_bytes) > 72:
+            return False
+        return bcrypt.checkpw(pwd_bytes, hashed_password.encode("utf-8"))
     except Exception:
         return False
 
@@ -166,24 +176,33 @@ def verify_hmac_share_token(
     requisition_id: str,
     matrix_data: Optional[Dict[str, Any]] = None,
     expected_snapshot_hash: Optional[str] = None,
+    expected_run_id: Optional[str] = None,
 ) -> bool:
-    """Verifica HMAC, snapshot_content_hash interno y locked_snapshot_hash persistido (H-04, H-32)."""
+    """Verifica HMAC, run_id, snapshot_content_hash interno y locked_snapshot_hash persistido (H-04, H-32, S-H5)."""
     try:
         parts = token.split(".")
         if len(parts) != 2:
             return False
         run_id, _ = parts
+        if not run_id:
+            return False
+        if expected_run_id is not None and not hmac.compare_digest(str(run_id), str(expected_run_id)):
+            return False
+
+        if not isinstance(matrix_data, dict):
+            return False
+        stored_hash = str(matrix_data.get("snapshot_content_hash") or "").strip()
+        if not stored_hash:
+            return False
 
         computed_hash = compute_matrix_snapshot_hash(matrix_data)
-        if isinstance(matrix_data, dict) and matrix_data.get("snapshot_content_hash"):
-            stored_hash = str(matrix_data["snapshot_content_hash"])
-            if not hmac.compare_digest(stored_hash, computed_hash):
-                return False
-
-        if expected_snapshot_hash and not hmac.compare_digest(
-            str(expected_snapshot_hash), computed_hash
-        ):
+        if not hmac.compare_digest(stored_hash, computed_hash):
             return False
+
+        if expected_snapshot_hash is not None:
+            exp_hash_clean = str(expected_snapshot_hash).strip()
+            if not exp_hash_clean or not hmac.compare_digest(exp_hash_clean, computed_hash):
+                return False
 
         expected_token = generate_hmac_share_token(
             run_id,
@@ -210,7 +229,7 @@ async def read_upload_file_bounded(
         if len(buffer) > max_bytes:
             max_mb = max(1, max_bytes // (1024 * 1024))
             raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                status_code=getattr(status, "HTTP_413_CONTENT_TOO_LARGE", 413),
                 detail=f"El archivo excede el tamaño máximo permitido de {max_mb} MB.",
             )
     return bytes(buffer)

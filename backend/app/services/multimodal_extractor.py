@@ -41,18 +41,25 @@ class MultimodalExtractorService:
     """Extrae y normaliza pedidos desde imágenes manuscritas, mensajes de texto o presets."""
 
     def __init__(self):
-        self.api_key = settings.GEMINI_API_KEY
         self.client: Optional[genai.Client] = None
-        if self.api_key:
-            try:
-                self.client = genai.Client(api_key=self.api_key)
-            except Exception as e:
-                logger.warning(f"No se pudo inicializar Google GenAI Client: {e}")
+
+    def _get_active_client(self) -> Optional[genai.Client]:
+        active_key = (settings.GEMINI_API_KEY or "").strip()
+        if not active_key:
+            return None
+        if self.client is not None:
+            return self.client
+        try:
+            self.client = genai.Client(api_key=active_key)
+            return self.client
+        except Exception as e:
+            logger.warning(f"No se pudo inicializar Google GenAI Client: {e}")
+            return None
 
     def extract_from_preset(self, preset_id: str) -> List[NormalizedItemDraft]:
         """Carga y procesa un preset predeterminado en menos de 1 segundo."""
         if preset_id not in DEMO_PRESETS:
-            preset_id = "whatsapp_jerga_noa"
+            raise ValueError(f"Preset '{preset_id}' no reconocido.")
         raw_text = DEMO_PRESETS[preset_id]
         return UnitNormalizerService.parse_and_normalize_line(raw_text)
 
@@ -60,7 +67,8 @@ class MultimodalExtractorService:
         self, image_bytes: bytes, mime_type: str = "image/jpeg"
     ) -> List[NormalizedItemDraft]:
         """Invoca Gemini 2.5 Flash con Structured Outputs JSON."""
-        if not self.client:
+        client = self._get_active_client()
+        if not client:
             raise RuntimeError("Gemini Client no inicializado")
 
         prompt = (
@@ -70,7 +78,7 @@ class MultimodalExtractorService:
             "(en pulgadas o milímetros), longitudes y materiales."
         )
 
-        response = self.client.models.generate_content(
+        response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
@@ -83,7 +91,11 @@ class MultimodalExtractorService:
             ),
         )
 
-        batch: RequisitionExtractionBatch = response.parsed
+        batch: Optional[RequisitionExtractionBatch] = getattr(response, "parsed", None)
+        if not batch or not getattr(batch, "items", None):
+            raise MultimodalExtractionUnavailableError(
+                "El modelo multimodal no devolvió una estructura válida de materiales."
+            )
         # Pasar cada renglón por el normalizador determinista con line_order estrictamente secuencial
         normalized_items: List[NormalizedItemDraft] = []
         item_counter = 1
@@ -109,26 +121,29 @@ class MultimodalExtractorService:
         if preset_id:
             return self.extract_from_preset(preset_id)
 
-        # 2. Si viene texto libre (WhatsApp, pegado de lista)
-        if raw_text and raw_text.strip():
-            return UnitNormalizerService.parse_and_normalize_line(raw_text)
-
-        # 3. Si viene imagen
+        # 2. Si viene imagen, priorizarla incluso si quedó texto residual en el formulario
         if image_bytes:
-            if self.client:
+            client = self._get_active_client()
+            if client:
                 try:
                     return self.extract_from_image_with_gemini(image_bytes, mime_type=mime_type)
+                except MultimodalExtractionUnavailableError:
+                    raise
                 except Exception as e:
                     logger.error(f"Falla en extracción multimodal Gemini: {e}")
                     raise MultimodalExtractionUnavailableError(
                         f"No se pudo extraer la lista de materiales desde la imagen: {str(e)}"
                     )
-            
+
             # Bloqueo honesto CO-02: Nunca inventar datos simulando que se leyó la foto
             raise MultimodalExtractionUnavailableError(
                 "El servicio de extracción de imágenes (Gemini) no está configurado (falta GEMINI_API_KEY). "
                 "Para probar pedidos de ejemplo utilice la sección 'Presets Rápidos'."
             )
+
+        # 3. Si viene texto libre (WhatsApp, pegado de lista)
+        if raw_text and raw_text.strip():
+            return UnitNormalizerService.parse_and_normalize_line(raw_text)
 
         # Entrada vacía: retornar lista vacía
         return []

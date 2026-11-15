@@ -55,7 +55,8 @@ test('flujo E2E completo: registro, verificación, catálogo CSV, HITL, compulsa
 
   await page.goto('/');
 
-  // 1. Sesión Demo inicial -> Abrir modal de Auth -> Registro Real con verificación por correo (H-28, H-29, H-33)
+  // 1. Sesión Demo inicial con cartel legal obligatorio -> Abrir modal de Auth -> Registro Real con verificación (H-28, H-29, H-33)
+  await expect(page.getByText('[MODO DEMO DATOS COMERCIALES ILUSTRATIVOS]')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Acceder' })).toBeVisible();
   await page.getByRole('button', { name: 'Acceder' }).click();
 
@@ -127,6 +128,7 @@ test('flujo E2E completo: registro, verificación, catálogo CSV, HITL, compulsa
   expect(lockData.public_share_token).toBeTruthy();
 
   await expect(page.getByText(/Copiar Enlace Público/i)).toBeVisible();
+  await expect(page.locator(`a[href="/p/${lockData.public_share_token}"]`)).toBeVisible();
 
   // 5. Descargar PDF autenticado (H-05)
   const downloadPromise = page.waitForEvent('download');

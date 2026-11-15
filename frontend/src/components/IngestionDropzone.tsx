@@ -27,6 +27,7 @@ export const IngestionDropzone: React.FC = () => {
     '50 bolsas de cemento avellaneda\n40 barras del 8\n20 hierro del 10\n4 caño de 3/4\n5 caño PVC 40 mm'
   );
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!currentRequisition) {
@@ -38,7 +39,7 @@ export const IngestionDropzone: React.FC = () => {
 
   const handlePresetClick = async (presetId: string) => {
     try {
-      await ingestPreset(presetId);
+      await ingestPreset(presetId, clientName);
       setIsExpanded(false);
     } catch {
       // Error manejado en store
@@ -211,12 +212,12 @@ export const IngestionDropzone: React.FC = () => {
         </div>
       </div>
 
-      {error && (
+      {(error || fileError) && (
         <div
           role="alert"
           className="mt-3.5 p-3 bg-semantic-dangerBg border border-semantic-dangerBorder rounded-control text-[13px] text-semantic-dangerText font-medium flex items-center gap-2"
         >
-          <span>{error}</span>
+          <span>{error || fileError}</span>
         </div>
       )}
 
@@ -227,8 +228,26 @@ export const IngestionDropzone: React.FC = () => {
             id="panel-presets"
             role="tabpanel"
             aria-labelledby="tab-presets"
-            className="grid grid-cols-1 md:grid-cols-3 gap-3"
+            className="space-y-3"
           >
+            <div>
+              <label
+                htmlFor="req-preset-client"
+                className="block text-[13px] font-semibold text-content-secondary mb-1"
+              >
+                Cliente o Comitente para el presupuesto (Opcional):
+              </label>
+              <input
+                id="req-preset-client"
+                type="text"
+                value={clientName}
+                onChange={(e) => setClientName(e.target.value)}
+                className="w-full sm:max-w-md h-9 bg-surface-subtle border border-surface-hairline focus:border-surface-strong rounded-control px-3 text-[13px] text-content-primary"
+                placeholder="Ej. Arq. Lucía Gómez / Constructora Jujuy"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <button
               onClick={() => void handlePresetClick('whatsapp_jerga_noa')}
               disabled={isLoading}
@@ -312,6 +331,7 @@ export const IngestionDropzone: React.FC = () => {
                 <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition" />
               </div>
             </button>
+            </div>
           </div>
         )}
 
@@ -338,7 +358,7 @@ export const IngestionDropzone: React.FC = () => {
                   required
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  className="w-full h-10 bg-surface-subtle border border-surface-hairline focus:border-surface-strong rounded-control px-3 text-[13px] text-content-primary focus:outline-none"
+                  className="w-full h-10 bg-surface-subtle border border-surface-hairline focus:border-surface-strong rounded-control px-3 text-[13px] text-content-primary"
                   placeholder="Ej. Casa Barrio Los Perales - Lote 4"
                 />
               </div>
@@ -354,8 +374,8 @@ export const IngestionDropzone: React.FC = () => {
                   type="text"
                   value={clientName}
                   onChange={(e) => setClientName(e.target.value)}
-                  className="w-full h-10 bg-surface-subtle border border-surface-hairline focus:border-surface-strong rounded-control px-3 text-[13px] text-content-primary focus:outline-none"
-                  placeholder="Ej. Ing. Juan Pérez / Constructora Jujuy"
+                  className="w-full h-10 bg-surface-subtle border border-surface-hairline focus:border-surface-strong rounded-control px-3 text-[13px] text-content-primary"
+                  placeholder="Ej. Arq. Lucía Gómez / Constructora Jujuy"
                 />
               </div>
             </div>
@@ -386,7 +406,7 @@ export const IngestionDropzone: React.FC = () => {
                 value={rawText}
                 onChange={(e) => setRawText(e.target.value)}
                 onKeyDown={handleKeyDownTextarea}
-                className="w-full bg-surface-subtle border border-surface-hairline focus:border-surface-strong rounded-control p-3 text-[13px] font-mono text-content-primary focus:outline-none leading-relaxed"
+                className="w-full bg-surface-subtle border border-surface-hairline focus:border-surface-strong rounded-control p-3 text-[13px] font-mono text-content-primary leading-relaxed"
                 placeholder="Pegá aquí tu lista con cantidades y medidas (ej. 20 barra del 8 y 4 caño de 3/4)..."
               />
             </div>
@@ -395,7 +415,7 @@ export const IngestionDropzone: React.FC = () => {
               <button
                 type="submit"
                 disabled={isLoading || !rawText.trim()}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-control bg-action-primary hover:bg-action-hover text-white font-bold text-[13px] shadow-card transition disabled:opacity-55 disabled:cursor-not-allowed min-h-[44px]"
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-control bg-action-primary hover:bg-action-hover text-action-primaryFg font-bold text-[13px] shadow-card transition disabled:opacity-55 disabled:cursor-not-allowed min-h-[44px]"
               >
                 {isLoading ? (
                   <>
@@ -436,7 +456,7 @@ export const IngestionDropzone: React.FC = () => {
                   required
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  className="w-full h-10 bg-surface-subtle border border-surface-hairline focus:border-surface-strong rounded-control px-3 text-[13px] text-content-primary focus:outline-none"
+                  className="w-full h-10 bg-surface-subtle border border-surface-hairline focus:border-surface-strong rounded-control px-3 text-[13px] text-content-primary"
                   placeholder="Ej. Casa Barrio Los Perales - Lote 4"
                 />
               </div>
@@ -452,8 +472,8 @@ export const IngestionDropzone: React.FC = () => {
                   type="text"
                   value={clientName}
                   onChange={(e) => setClientName(e.target.value)}
-                  className="w-full h-10 bg-surface-subtle border border-surface-hairline focus:border-surface-strong rounded-control px-3 text-[13px] text-content-primary focus:outline-none"
-                  placeholder="Ej. Ing. Juan Pérez / Constructora Jujuy"
+                  className="w-full h-10 bg-surface-subtle border border-surface-hairline focus:border-surface-strong rounded-control px-3 text-[13px] text-content-primary"
+                  placeholder="Ej. Arq. Lucía Gómez / Constructora Jujuy"
                 />
               </div>
             </div>
@@ -474,7 +494,17 @@ export const IngestionDropzone: React.FC = () => {
                 id="file-upload-input"
                 type="file"
                 accept="image/*"
-                onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                onChange={(e) => {
+                  const chosen = e.target.files?.[0] || null;
+                  if (chosen && chosen.size > 10 * 1024 * 1024) {
+                    setFileError('La imagen supera el tamaño máximo permitido de 10 MB.');
+                    setSelectedFile(null);
+                    e.target.value = '';
+                    return;
+                  }
+                  setFileError(null);
+                  setSelectedFile(chosen);
+                }}
                 className="sr-only"
               />
               <label
@@ -497,7 +527,7 @@ export const IngestionDropzone: React.FC = () => {
               <button
                 type="submit"
                 disabled={isLoading || !selectedFile}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-control bg-action-primary hover:bg-action-hover text-white font-bold text-[13px] shadow-card transition disabled:opacity-55 disabled:cursor-not-allowed min-h-[44px]"
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-control bg-action-primary hover:bg-action-hover text-action-primaryFg font-bold text-[13px] shadow-card transition disabled:opacity-55 disabled:cursor-not-allowed min-h-[44px]"
               >
                 {isLoading ? (
                   <>
