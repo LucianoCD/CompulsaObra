@@ -60,7 +60,10 @@ def run_migrations():
     if os.path.exists(alembic_ini_path):
         try:
             alembic_cfg = Config(alembic_ini_path)
-            alembic_cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+            alembic_cfg.set_main_option(
+                "sqlalchemy.url",
+                settings.migrations_database_url.replace("%", "%%"),
+            )
             command.upgrade(alembic_cfg, "head")
             logger.info("Migraciones Alembic aplicadas exitosamente.")
             return

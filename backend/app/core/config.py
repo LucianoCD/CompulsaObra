@@ -4,10 +4,25 @@ from email.utils import parseaddr
 from pathlib import Path
 import re
 import secrets
+import sys
 from typing import List, Literal, Optional, Union
 from urllib.parse import urlparse
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
+_REPO_ROOT_DIR = Path(__file__).resolve().parents[3]
+
+
+def _default_env_files() -> tuple[str, ...]:
+    """Carga .env raíz y backend fuera de pytest para aislar pruebas unitarias."""
+    if "pytest" in sys.modules:
+        return ()
+    return (
+        str(_REPO_ROOT_DIR / ".env"),
+        str(_BACKEND_DIR / ".env"),
+        ".env",
+    )
 
 ALLOWED_ENVIRONMENTS = {"production", "development", "dev", "test", "testing", "local"}
 DISALLOWED_PROD_HOSTS = {"mailpit", "localhost", "127.0.0.1", "0.0.0.0", "::1"}
@@ -43,8 +58,9 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "CompulsaObra"
     ENVIRONMENT: str = "development"
 
-    # Persistencia Híbrida: SQLite por defecto para dev local y pytest; PostgreSQL en Docker/producción
+    # Persistencia Híbrida: SQLite por defecto para dev local y pytest; PostgreSQL (Neon/Docker) en producción o .env
     DATABASE_URL: str = Field(default="sqlite:///./compulsaobra.db")
+    DATABASE_URL_UNPOOLED: str = Field(default="")
 
     # Seguridad JWT y HMAC (secretos efímeros independientes en memoria para dev/test; obligatorios en producción)
     SECRET_KEY: str = Field(default_factory=lambda: secrets.token_urlsafe(48))
@@ -98,6 +114,13 @@ class Settings(BaseSettings):
             return self.COOKIE_SECURE
         return self.ENVIRONMENT.lower() == "production"
 
+    @property
+    def migrations_database_url(self) -> str:
+        """Usa conexión directa unpooled (p. ej. Neon) para DDL/Alembic cuando DATABASE_URL apunta a PostgreSQL."""
+        if self.DATABASE_URL.startswith("sqlite"):
+            return self.DATABASE_URL
+        return self.DATABASE_URL_UNPOOLED.strip() or self.DATABASE_URL
+
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
         env_normalized = self.ENVIRONMENT.strip().lower()
@@ -131,7 +154,10 @@ class Settings(BaseSettings):
                 raise ValueError("En producción SECRET_KEY y HMAC_SHARE_SECRET deben ser distintos.")
             if self.DATABASE_URL.startswith("sqlite"):
                 raise ValueError("En entorno de producción no se permite SQLite; utilice PostgreSQL 16.")
-            if any(bad in self.DATABASE_URL for bad in INSECURE_DB_PASSWORDS):
+            if any(bad in self.DATABASE_URL for bad in INSECURE_DB_PASSWORDS) or (
+                self.DATABASE_URL_UNPOOLED
+                and any(bad in self.DATABASE_URL_UNPOOLED for bad in INSECURE_DB_PASSWORDS)
+            ):
                 raise ValueError("DATABASE_URL contiene credenciales por defecto inseguras para producción.")
             if not self.REQUIRE_EMAIL_VERIFICATION:
                 raise ValueError("En entorno de producción REQUIRE_EMAIL_VERIFICATION debe estar habilitado (true).")
@@ -203,10 +229,10 @@ class Settings(BaseSettings):
                 self.CORS_ORIGINS = [f"{parsed_url.scheme}://{parsed_url.netloc}"]
         return self
 
-    @field_validator("DATABASE_URL", mode="before")
+    @field_validator("DATABASE_URL", "DATABASE_URL_UNPOOLED", mode="before")
     @classmethod
     def normalize_database_url(cls, v: str) -> str:
-        return normalize_postgres_url(v)
+        return normalize_postgres_url(v or "")
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
@@ -224,7 +250,7 @@ class Settings(BaseSettings):
         return v if isinstance(v, list) else [str(v)]
 
     model_config = SettingsConfigDict(
-        env_file=(str(Path(__file__).resolve().parents[2] / ".env"), ".env"),
+        env_file=_default_env_files(),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
