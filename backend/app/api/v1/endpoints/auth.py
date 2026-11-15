@@ -138,9 +138,10 @@ class RoleUpdateResponse(BaseModel):
 def register_user_and_workspace(
     payload: RegisterRequest,
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
 ):
-    """Registra cuenta y workspace real SIN emitir sesión hasta verificar el correo (H-28, H-29)."""
+    """Registra cuenta y workspace real; si no se exige verificación por email, inicia sesión directa."""
     auth_rate_limiter.check_rate_limit(_client_rate_key(request, "register"), db=db)
 
     normalized_email = payload.email.strip().lower()
@@ -155,6 +156,7 @@ def register_user_and_workspace(
 
     target_role = payload.role if payload.role in ["BUYER", "ESTIMATOR"] else "ESTIMATOR"
     now = datetime.now(timezone.utc)
+    require_verification = bool(settings.REQUIRE_EMAIL_VERIFICATION)
 
     new_ws = Workspace(
         id=uuid.uuid4(),
@@ -165,8 +167,57 @@ def register_user_and_workspace(
     db.add(new_ws)
     db.flush()
 
-    raw_verification_token = secrets.token_urlsafe(32)
-    expires_at = now + timedelta(minutes=settings.EMAIL_VERIFICATION_EXPIRE_MINUTES)
+    if require_verification:
+        raw_verification_token = secrets.token_urlsafe(32)
+        expires_at = now + timedelta(minutes=settings.EMAIL_VERIFICATION_EXPIRE_MINUTES)
+        new_user = User(
+            id=uuid.uuid4(),
+            workspace_id=new_ws.id,
+            email=normalized_email,
+            full_name=payload.full_name,
+            password_hash=get_password_hash(payload.password),
+            role=target_role,
+            email_verified=False,
+            verification_token_hash=hash_verification_token(raw_verification_token),
+            verification_token_expires_at=expires_at,
+            verification_sent_at=now,
+            failed_login_attempts=0,
+        )
+        db.add(new_user)
+        db.flush()
+
+        try:
+            EmailService.send_verification_email(
+                recipient_email=new_user.email,
+                verification_token=raw_verification_token,
+                workspace_name=new_ws.name,
+                expires_minutes=settings.EMAIL_VERIFICATION_EXPIRE_MINUTES,
+            )
+        except EmailDeliveryError:
+            db.rollback()
+            raise
+
+        record_traction_event(
+            db,
+            event_type="USER_REGISTERED",
+            workspace_id=new_ws.id,
+            user_id=new_user.id,
+            is_demo=False,
+        )
+        db.commit()
+
+        return SessionResponse(
+            authenticated=False,
+            workspace_id=new_ws.id,
+            workspace_name=new_ws.name,
+            is_demo=False,
+            role=new_user.role,
+            email=new_user.email,
+            email_verified=False,
+            verification_required=True,
+            message="Cuenta creada. Revisá tu correo electrónico para verificar la dirección antes de iniciar sesión.",
+        )
+
     new_user = User(
         id=uuid.uuid4(),
         workspace_id=new_ws.id,
@@ -174,25 +225,14 @@ def register_user_and_workspace(
         full_name=payload.full_name,
         password_hash=get_password_hash(payload.password),
         role=target_role,
-        email_verified=False,
-        verification_token_hash=hash_verification_token(raw_verification_token),
-        verification_token_expires_at=expires_at,
-        verification_sent_at=now,
+        email_verified=True,
+        verification_token_hash=None,
+        verification_token_expires_at=None,
+        verification_sent_at=None,
         failed_login_attempts=0,
     )
     db.add(new_user)
     db.flush()
-
-    try:
-        EmailService.send_verification_email(
-            recipient_email=new_user.email,
-            verification_token=raw_verification_token,
-            workspace_name=new_ws.name,
-            expires_minutes=settings.EMAIL_VERIFICATION_EXPIRE_MINUTES,
-        )
-    except EmailDeliveryError:
-        db.rollback()
-        raise
 
     record_traction_event(
         db,
@@ -201,18 +241,34 @@ def register_user_and_workspace(
         user_id=new_user.id,
         is_demo=False,
     )
+    record_traction_event(
+        db,
+        event_type="USER_EMAIL_VERIFIED",
+        workspace_id=new_ws.id,
+        user_id=new_user.id,
+        is_demo=False,
+    )
     db.commit()
 
+    token = create_access_token({
+        "sub": new_user.email,
+        "user_id": str(new_user.id),
+        "workspace_id": str(new_ws.id),
+        "role": new_user.role,
+        "is_demo": False,
+    })
+    _set_session_cookies(response, token)
+
     return SessionResponse(
-        authenticated=False,
+        authenticated=True,
         workspace_id=new_ws.id,
         workspace_name=new_ws.name,
         is_demo=False,
         role=new_user.role,
         email=new_user.email,
-        email_verified=False,
-        verification_required=settings.REQUIRE_EMAIL_VERIFICATION,
-        message="Cuenta creada. Revisá tu correo electrónico para verificar la dirección antes de iniciar sesión.",
+        email_verified=True,
+        verification_required=False,
+        message="Cuenta creada e iniciada correctamente.",
     )
 
 

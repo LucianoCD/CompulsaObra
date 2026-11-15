@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: compulsa-obra-backend
+    runtime: docker
+    rootDir: backend
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: development
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: HMAC_SHARE_SECRET
+        generateValue: true
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: REQUIRE_EMAIL_VERIFICATION
+        value: "false"
+      - key: EMAIL_BACKEND
+        value: memory
+      - key: FRONTEND_PUBLIC_URL
+        value: https://compulsa-obra.vercel.app
+      - key: CORS_ORIGINS
+        value: '["https://compulsa-obra.vercel.app"]'
+      - key: GEMINI_API_KEY
+        sync: false

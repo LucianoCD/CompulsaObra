@@ -1,6 +1,8 @@
 """Suite integral de regresión y verificación empírica para la remediación completa de auditoría."""
 
 from io import BytesIO
+import json
+from pathlib import Path
 import uuid
 
 from fastapi.testclient import TestClient
@@ -11,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.security import (
+    AUTH_COOKIE_NAME,
     CSRF_COOKIE_NAME,
     CSRF_HEADER_NAME,
     verify_hmac_share_token,
@@ -569,3 +572,57 @@ def test_sh6_demo_role_isolated_in_cookie_and_excluded_from_traction(client: Tes
 
     after_traction = client.get("/api/v1/public/traction").json()
     assert after_traction == before_traction
+
+
+def test_deploy_option_a_files_and_profile_a1_direct_registration(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Opción A: Verifica vercel.json, backend/Dockerfile, render.yaml y registro directo sin SMTP en Perfil A1."""
+    repo_root = Path(__file__).resolve().parents[2]
+    assert (repo_root / "DEPLOY_SPEC_OPTION_A.md").exists()
+    assert (repo_root / "render.yaml").exists()
+
+    vercel_cfg = json.loads((repo_root / "frontend" / "vercel.json").read_text(encoding="utf-8"))
+    rewrites = vercel_cfg.get("rewrites") or []
+    sources = {r["source"]: r["destination"] for r in rewrites}
+    assert "/api/v1/:path*" in sources and "/api/v1/:path*" in sources["/api/v1/:path*"]
+    assert "/health" in sources and sources["/health"].endswith("/health")
+    assert any(r.get("destination") == "/index.html" for r in rewrites)
+
+    dockerfile_txt = (repo_root / "backend" / "Dockerfile").read_text(encoding="utf-8")
+    assert "${PORT:-8000}" in dockerfile_txt
+
+    monkeypatch.setattr(settings, "REQUIRE_EMAIL_VERIFICATION", False)
+    email = f"deploy_a1_{uuid.uuid4().hex[:6]}@constructora.com.ar"
+    res_reg = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": email,
+            "password": "PasswordSeguro2026!",
+            "full_name": "Ing. Perfil A1",
+            "workspace_name": "Estudio Nube Jujuy",
+            "role": "ESTIMATOR",
+        },
+    )
+    assert res_reg.status_code == 201, res_reg.text
+    reg_data = res_reg.json()
+    assert reg_data["authenticated"] is True
+    assert reg_data["email_verified"] is True
+    assert reg_data["verification_required"] is False
+    assert AUTH_COOKIE_NAME in client.cookies
+    csrf = client.cookies.get(CSRF_COOKIE_NAME)
+    assert csrf
+
+    res_me = client.get("/api/v1/auth/me")
+    assert res_me.status_code == 200
+    assert res_me.json()["is_demo"] is False
+    assert res_me.json()["email"] == email
+
+    res_vendor = client.post(
+        "/api/v1/vendors",
+        json={"name": "Corralón Nube A1", "locality": "San Salvador de Jujuy"},
+        headers={CSRF_HEADER_NAME: csrf},
+    )
+    assert res_vendor.status_code == 201
+

@@ -130,6 +130,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     workspaceName?: string,
     role?: UserRole
   ) => {
+    const prevWsId = get().workspaceId;
     try {
       set({ isLoading: true, error: null });
       const res = await apiClient.register({
@@ -139,6 +140,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         workspace_name: workspaceName,
         role,
       });
+      if (res.authenticated && !res.verification_required) {
+        applySessionToClient(res, set, prevWsId);
+        return res;
+      }
       set({
         pendingVerificationEmail: res.email,
         isLoading: false,

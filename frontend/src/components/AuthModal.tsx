@@ -84,11 +84,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           fullName.trim(),
           workspaceName.trim() || undefined
         );
-        setInfoMessage(
-          res.message ||
-            'Te enviamos un correo con el código de verificación para activar tu cuenta.'
-        );
-        setStep('verify');
+        if (res.authenticated && !res.verification_required) {
+          handleClose();
+        } else {
+          setInfoMessage(
+            res.message ||
+              'Te enviamos un correo con el código de verificación para activar tu cuenta.'
+          );
+          setStep('verify');
+        }
       } else if (step === 'verify') {
         if (!verificationCode.trim()) {
           throw new Error('Ingresá el código de verificación recibido por correo.');
