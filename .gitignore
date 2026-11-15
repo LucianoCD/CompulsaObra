@@ -35,5 +35,8 @@ frontend/playwright-report/
 repomix-output.xml
 .agents/
 AGENTS.md
+BRAND_SPEC.md
+DEPLOY_SPEC_OPTION_A.md
+DESIGN_SPEC.md
 especificaci_n_funcional_cotizaobra_ai_comparador.md
 .neon

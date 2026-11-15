@@ -580,7 +580,6 @@ def test_deploy_option_a_files_and_profile_a1_direct_registration(
 ):
     """Opción A: Verifica vercel.json, backend/Dockerfile, render.yaml y registro directo sin SMTP en Perfil A1."""
     repo_root = Path(__file__).resolve().parents[2]
-    assert (repo_root / "DEPLOY_SPEC_OPTION_A.md").exists()
     assert (repo_root / "render.yaml").exists()
 
     vercel_cfg = json.loads((repo_root / "frontend" / "vercel.json").read_text(encoding="utf-8"))
